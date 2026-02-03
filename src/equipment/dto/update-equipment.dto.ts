@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min, IsBoolean } from 'class-validator';
 
 export class UpdateEquipmentDto {
   @IsOptional()
@@ -6,11 +6,15 @@ export class UpdateEquipmentDto {
   nome?: string;
 
   @IsOptional()
+  @IsString()
+  descricao?: string;
+
+  @IsOptional()
   @IsInt()
-  @Min(0)
+  @Min(1)
   quantidadeTotal?: number;
 
   @IsOptional()
-  @IsString()
-  descricao?: string;
+  @IsBoolean()
+  ativo?: boolean;
 }

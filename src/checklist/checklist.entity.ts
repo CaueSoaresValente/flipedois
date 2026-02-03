@@ -24,6 +24,15 @@ export class Checklist {
   @PrimaryGeneratedColumn()
   id: number;
 
+  @Column({ nullable: true })
+  motivoCancelamento?: string;
+
+  @Column({ nullable: true })
+  canceladoPor?: string;
+
+  @Column({ nullable: true })
+  canceladoEm?: Date;
+
   @Column()
   nome: string;
 

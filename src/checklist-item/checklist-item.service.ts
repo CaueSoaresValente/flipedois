@@ -257,6 +257,10 @@ export class ChecklistItemService {
   }
 
   async updateQuantidade(itemId: number, quantidade: number) {
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida');
+    }
+
     const item = await this.repository.findOne({
       where: { id: itemId },
       relations: ['checklist'],
@@ -269,6 +273,20 @@ export class ChecklistItemService {
     if (item.checklist.status !== 'rascunho') {
       throw new BadRequestException(
         'Só é possível alterar itens em checklist rascunho',
+      );
+    }
+
+    const equipment = await this.equipmentRepository.findOne({
+      where: { id: item.equipmentId },
+    });
+
+    if (!equipment) {
+      throw new BadRequestException('Equipamento não encontrado');
+    }
+
+    if (quantidade > equipment.quantidadeDisponivel) {
+      throw new BadRequestException(
+        `Estoque insuficiente. Disponível: ${equipment.quantidadeDisponivel}`,
       );
     }
 
@@ -296,7 +314,15 @@ export class ChecklistItemService {
     return { message: 'Item removido com sucesso' };
   }
 
-  async trocarEquipamento(itemId: number, equipmentId: number) {
+  async trocarEquipamento(
+    itemId: number,
+    equipmentId: number,
+    quantidade: number,
+  ) {
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida');
+    }
+
     const item = await this.repository.findOne({
       where: { id: itemId },
       relations: ['checklist'],
@@ -320,9 +346,17 @@ export class ChecklistItemService {
       throw new BadRequestException('Equipamento não encontrado');
     }
 
+    if (quantidade > equipment.quantidadeDisponivel) {
+      throw new BadRequestException(
+        `Estoque insuficiente. Disponível: ${equipment.quantidadeDisponivel}`,
+      );
+    }
+
+    // troca completa
     item.equipmentId = equipment.id;
     item.nomeSnapshot = equipment.nome;
     item.descricaoSnapshot = equipment.descricao;
+    item.quantidadePlanejada = quantidade;
 
     return this.repository.save(item);
   }

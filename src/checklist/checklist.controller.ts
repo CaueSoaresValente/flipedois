@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { ChecklistService } from './checklist.service';
 import { Roles } from '../auth/roles.decorator';
 import { CreateChecklistDto } from './dto/create-checklist.dto';
+import { CancelarChecklistDto } from './dto/cancelar-checklist.dto';
 
 @Controller('checklist')
 export class ChecklistController {
@@ -32,7 +33,11 @@ export class ChecklistController {
 
   @Roles('ADMIN')
   @Patch(':id/cancelar')
-  cancelar(@Param('id') id: string) {
-    return this.service.cancelar(Number(id));
+  cancelar(
+    @Param('id') id: string,
+    @Body() dto: CancelarChecklistDto,
+    @Req() req,
+  ) {
+    return this.service.cancelar(Number(id), dto.motivo, req.user.email);
   }
 }

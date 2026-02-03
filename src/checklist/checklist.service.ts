@@ -168,7 +168,7 @@ export class ChecklistService {
     };
   }
 
-  async cancelar(id: number) {
+  async cancelar(id: number, motivo: string, usuario: string) {
     const checklist = await this.checklistRepository.findOne({
       where: { id },
       relations: ['items'],
@@ -184,7 +184,7 @@ export class ChecklistService {
       );
     }
 
-    // 🔁 DEVOLVE TODO ESTOQUE
+    // 🔁 DEVOLVE ESTOQUE
     for (const item of checklist.items) {
       const equipment = await this.equipmentRepository.findOne({
         where: { id: item.equipmentId },
@@ -197,6 +197,10 @@ export class ChecklistService {
     }
 
     checklist.status = 'cancelado';
+    checklist.motivoCancelamento = motivo;
+    checklist.canceladoPor = usuario;
+    checklist.canceladoEm = new Date();
+
     return this.checklistRepository.save(checklist);
   }
 }

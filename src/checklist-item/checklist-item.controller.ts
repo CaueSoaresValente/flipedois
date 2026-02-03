@@ -64,6 +64,10 @@ export class ChecklistItemController {
   @Roles('ADMIN')
   @Patch(':id/trocar')
   trocar(@Param('id') id: string, @Body() dto: TrocarEquipmentDto) {
-    return this.service.trocarEquipamento(Number(id), dto.equipmentId);
+    return this.service.trocarEquipamento(
+      Number(id),
+      dto.equipmentId,
+      dto.quantidadePlanejada,
+    );
   }
 }
