@@ -13,15 +13,19 @@ export class EquipmentService {
   ) {}
 
   async create(dto: CreateEquipmentDto) {
-    if (dto.quantidadeTotal <= 0) {
-      throw new BadRequestException('Quantidade total deve ser maior que zero');
+    if (dto.quantidadeTotal <= 0 && dto.origem === 'interno') {
+      throw new BadRequestException('Quantidade inválida');
     }
+
+    const origem = dto.origem ?? 'interno';
 
     const equipment = this.repository.create({
       nome: dto.nome,
       descricao: dto.descricao,
-      quantidadeTotal: dto.quantidadeTotal,
-      quantidadeDisponivel: dto.quantidadeTotal, // 🔒 REGRA DE NEGÓCIO
+      quantidadeTotal: origem === 'interno' ? dto.quantidadeTotal : 0,
+      quantidadeDisponivel: origem === 'interno' ? dto.quantidadeTotal : 0,
+      origem,
+      fornecedor: dto.fornecedor,
       ativo: true,
     });
 
@@ -30,14 +34,13 @@ export class EquipmentService {
 
   async findAll() {
     return this.repository.find({
+      where: { ativo: true },
       order: { nome: 'ASC' },
     });
   }
 
   async update(id: number, dto: UpdateEquipmentDto) {
-    const equipment = await this.repository.findOne({
-      where: { id },
-    });
+    const equipment = await this.repository.findOne({ where: { id } });
 
     if (!equipment) {
       throw new BadRequestException('Equipamento não encontrado');
@@ -46,33 +49,38 @@ export class EquipmentService {
     const quantidadeEmUso =
       equipment.quantidadeTotal - equipment.quantidadeDisponivel;
 
-    // Se tentou mudar quantidade total
     if (dto.quantidadeTotal !== undefined) {
       if (dto.quantidadeTotal < quantidadeEmUso) {
         throw new BadRequestException(
-          `Não é possível reduzir estoque. Existem ${quantidadeEmUso} unidades já em uso em eventos.`,
+          `Existem ${quantidadeEmUso} unidades em uso`,
         );
       }
 
       const diferenca = dto.quantidadeTotal - equipment.quantidadeTotal;
-
-      // Ajusta disponível proporcionalmente
       equipment.quantidadeDisponivel += diferenca;
       equipment.quantidadeTotal = dto.quantidadeTotal;
     }
 
-    if (dto.nome !== undefined) {
-      equipment.nome = dto.nome;
+    if (dto.nome !== undefined && dto.nome.trim() === '') {
+      throw new BadRequestException('Nome não pode ser vazio');
     }
 
-    if (dto.descricao !== undefined) {
-      equipment.descricao = dto.descricao;
+    if (dto.descricao !== undefined && dto.descricao.trim() === '') {
+      throw new BadRequestException('Descrição não pode ser vazia');
     }
 
-    if (dto.ativo !== undefined) {
-      equipment.ativo = dto.ativo;
+    Object.assign(equipment, dto);
+    return this.repository.save(equipment);
+  }
+
+  async desativar(id: number) {
+    const equipment = await this.repository.findOne({ where: { id } });
+
+    if (!equipment) {
+      throw new BadRequestException('Equipamento não encontrado');
     }
 
+    equipment.ativo = false;
     return this.repository.save(equipment);
   }
 }

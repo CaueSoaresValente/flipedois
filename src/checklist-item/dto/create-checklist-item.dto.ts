@@ -1,4 +1,4 @@
-import { IsInt, Min } from 'class-validator';
+import { IsIn, IsInt, Min } from 'class-validator';
 
 export class CreateChecklistItemDto {
   @IsInt()
@@ -10,4 +10,7 @@ export class CreateChecklistItemDto {
   @IsInt()
   @Min(1)
   quantidadePlanejada: number;
+
+  @IsIn(['som', 'luz', 'video', 'estrutura'])
+  setor: 'som' | 'luz' | 'video' | 'estrutura';
 }

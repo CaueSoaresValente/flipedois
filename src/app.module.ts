@@ -11,6 +11,8 @@ import { ChecklistModule } from './checklist/checklist.module';
 import { ChecklistItemModule } from './checklist-item/checklist-item.module';
 import { ChecklistItemHistoryModule } from './checklist-item-history/checklist-item-history.module';
 import { EquipmentModule } from './equipment/equipment.module';
+import { ChecklistTeamModule } from './checklist-team/checklist-team.module';
+import { EventModule } from './event/event.module';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { EquipmentModule } from './equipment/equipment.module';
     ChecklistItemModule,
     ChecklistItemHistoryModule,
     EquipmentModule,
+    ChecklistTeamModule,
+    EventModule,
   ],
   providers: [
     {

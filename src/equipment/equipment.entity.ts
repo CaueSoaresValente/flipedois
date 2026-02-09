@@ -5,6 +5,8 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 
+export type EquipmentOrigem = 'interno' | 'alugado';
+
 @Entity('equipment')
 export class Equipment {
   @PrimaryGeneratedColumn()
@@ -27,4 +29,10 @@ export class Equipment {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  @Column({ default: 'interno' })
+  origem: EquipmentOrigem;
+
+  @Column({ nullable: true })
+  fornecedor?: string;
 }

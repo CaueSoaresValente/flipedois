@@ -1,4 +1,11 @@
-import { IsInt, IsNotEmpty, IsString, Min } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsString,
+  Min,
+  IsOptional,
+  IsIn,
+} from 'class-validator';
 
 export class CreateEquipmentDto {
   @IsString()
@@ -11,4 +18,12 @@ export class CreateEquipmentDto {
   @IsInt()
   @Min(0)
   quantidadeTotal: number;
+
+  @IsOptional()
+  @IsIn(['interno', 'alugado'])
+  origem?: 'interno' | 'alugado';
+
+  @IsOptional()
+  @IsString()
+  fornecedor?: string;
 }

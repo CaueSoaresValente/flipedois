@@ -5,6 +5,7 @@ import { ChecklistItem } from './checklist-item.entity';
 import { Checklist } from '../checklist/checklist.entity';
 import { Equipment } from '../equipment/equipment.entity';
 import { ChecklistItemHistoryService } from '../checklist-item-history/checklist-item-history.service';
+import { CreateChecklistItemDto } from './dto/create-checklist-item.dto';
 
 @Injectable()
 export class ChecklistItemService {
@@ -24,11 +25,7 @@ export class ChecklistItemService {
   // ==============================
   // CREATE (ADMIN)
   // ==============================
-  async create(data: {
-    checklistId: number;
-    equipmentId: number;
-    quantidadePlanejada: number;
-  }) {
+  async create(data: CreateChecklistItemDto) {
     const checklist = await this.checklistRepository.findOne({
       where: { id: data.checklistId },
     });
@@ -51,11 +48,18 @@ export class ChecklistItemService {
       throw new BadRequestException('Equipamento não encontrado');
     }
 
+    if (!equipment.ativo) {
+      throw new BadRequestException('Equipamento está inativo');
+    }
+
     if (data.quantidadePlanejada <= 0) {
       throw new BadRequestException('Quantidade inválida');
     }
 
-    if (data.quantidadePlanejada > equipment.quantidadeDisponivel) {
+    if (
+      equipment.origem === 'interno' &&
+      data.quantidadePlanejada > equipment.quantidadeDisponivel
+    ) {
       throw new BadRequestException(
         `Estoque insuficiente. Disponível: ${equipment.quantidadeDisponivel}`,
       );
@@ -76,10 +80,11 @@ export class ChecklistItemService {
 
     const item = this.repository.create({
       checklistId: data.checklistId,
-      equipmentId: data.equipmentId,
+      equipmentId: equipment.id,
       nomeSnapshot: equipment.nome,
       descricaoSnapshot: equipment.descricao,
       quantidadePlanejada: data.quantidadePlanejada,
+      setor: data.setor,
     });
 
     return this.repository.save(item);
@@ -187,7 +192,10 @@ export class ChecklistItemService {
     }
 
     // 🔺 DEVOLVE AO ESTOQUE (UM POR UM)
-    equipment.quantidadeDisponivel += quantidade;
+    if (equipment.origem === 'interno') {
+      equipment.quantidadeDisponivel += quantidade;
+    }
+
     await this.equipmentRepository.save(equipment);
 
     const anterior = item.quantidadeDevolvida;
@@ -280,11 +288,14 @@ export class ChecklistItemService {
       where: { id: item.equipmentId },
     });
 
-    if (!equipment) {
-      throw new BadRequestException('Equipamento não encontrado');
+    if (!equipment || !equipment.ativo) {
+      throw new BadRequestException('Equipamento inválido ou inativo');
     }
 
-    if (quantidade > equipment.quantidadeDisponivel) {
+    if (
+      equipment.origem === 'interno' &&
+      quantidade > equipment.quantidadeDisponivel
+    ) {
       throw new BadRequestException(
         `Estoque insuficiente. Disponível: ${equipment.quantidadeDisponivel}`,
       );
@@ -293,7 +304,6 @@ export class ChecklistItemService {
     item.quantidadePlanejada = quantidade;
     return this.repository.save(item);
   }
-
   async remove(itemId: number) {
     const item = await this.repository.findOne({
       where: { id: itemId },
@@ -342,17 +352,19 @@ export class ChecklistItemService {
       where: { id: equipmentId },
     });
 
-    if (!equipment) {
-      throw new BadRequestException('Equipamento não encontrado');
+    if (!equipment || !equipment.ativo) {
+      throw new BadRequestException('Equipamento inválido ou inativo');
     }
 
-    if (quantidade > equipment.quantidadeDisponivel) {
+    if (
+      equipment.origem === 'interno' &&
+      quantidade > equipment.quantidadeDisponivel
+    ) {
       throw new BadRequestException(
         `Estoque insuficiente. Disponível: ${equipment.quantidadeDisponivel}`,
       );
     }
 
-    // troca completa
     item.equipmentId = equipment.id;
     item.nomeSnapshot = equipment.nome;
     item.descricaoSnapshot = equipment.descricao;

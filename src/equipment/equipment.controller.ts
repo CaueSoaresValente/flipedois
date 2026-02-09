@@ -28,4 +28,10 @@ export class EquipmentController {
   update(@Param('id') id: string, @Body() dto: UpdateEquipmentDto) {
     return this.service.update(Number(id), dto);
   }
+
+  @Roles('ADMIN')
+  @Patch(':id/desativar')
+  desativar(@Param('id') id: string) {
+    return this.service.desativar(Number(id));
+  }
 }

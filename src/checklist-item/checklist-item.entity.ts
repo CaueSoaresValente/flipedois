@@ -48,4 +48,10 @@ export class ChecklistItem {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  @Column({
+    type: 'varchar',
+    default: 'som',
+  })
+  setor: 'som' | 'luz' | 'video' | 'estrutura';
 }

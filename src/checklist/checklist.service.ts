@@ -101,7 +101,10 @@ export class ChecklistService {
         throw new BadRequestException('Equipamento não encontrado');
       }
 
-      equipment.quantidadeDisponivel -= quantidade;
+      if (equipment.origem === 'interno') {
+        equipment.quantidadeDisponivel -= quantidade;
+      }
+
       await this.equipmentRepository.save(equipment);
     }
 
