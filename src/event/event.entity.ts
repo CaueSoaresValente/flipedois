@@ -37,7 +37,7 @@ export class Event {
   @JoinColumn()
   checklist: Checklist;
 
-  @OneToMany(() => EventTeam, team => team.event, {
+  @OneToMany(() => EventTeam, (team) => team.event, {
     cascade: true,
   })
   equipe: EventTeam[];
