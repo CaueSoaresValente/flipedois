@@ -16,7 +16,7 @@ export class ChecklistService {
 
     @InjectRepository(Equipment)
     private readonly equipmentRepository: Repository<Equipment>,
-  ) {}
+  ) { }
 
   // ==============================
   // CREATE
@@ -206,4 +206,55 @@ export class ChecklistService {
 
     return this.checklistRepository.save(checklist);
   }
+
+  async obterAlertas(checklistId: number) {
+    const checklist = await this.checklistRepository.findOne({
+      where: { id: checklistId },
+      relations: ['items'],
+    });
+
+    if (!checklist) throw new BadRequestException('Checklist não encontrado');
+
+    let pendentesSeparacao = 0;
+    let pendentesDevolucao = 0;
+
+    for (const item of checklist.items) {
+      if (item.quantidadeSeparada < item.quantidadePlanejada) {
+        pendentesSeparacao++;
+      }
+
+      if (
+        item.quantidadeSeparada > 0 &&
+        item.quantidadeDevolvida < item.quantidadeSeparada
+      ) {
+        pendentesDevolucao++;
+      }
+    }
+
+    const alertas: string[] = [];
+
+    if (pendentesSeparacao > 0) {
+      alertas.push(
+        `${pendentesSeparacao} item(ns) pendentes de separação`,
+      );
+    }
+
+    if (pendentesDevolucao > 0) {
+      alertas.push(
+        `${pendentesDevolucao} item(ns) pendentes de devolução`,
+      );
+    }
+
+    if (alertas.length === 0) {
+      alertas.push('Checklist totalmente regular');
+    }
+
+    return {
+      checklistId,
+      status: checklist.status,
+      alertas,
+    };
+  }
+
+
 }

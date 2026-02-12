@@ -6,7 +6,7 @@ import { CancelarChecklistDto } from './dto/cancelar-checklist.dto';
 
 @Controller('checklist')
 export class ChecklistController {
-  constructor(private readonly service: ChecklistService) {}
+  constructor(private readonly service: ChecklistService) { }
 
   @Roles('ADMIN')
   @Post()
@@ -40,4 +40,10 @@ export class ChecklistController {
   ) {
     return this.service.cancelar(Number(id), dto.motivo, req.user.email);
   }
+
+  @Get(':id/alertas')
+  obterAlertas(@Param('id') id: string) {
+    return this.service.obterAlertas(Number(id));
+  }
+
 }

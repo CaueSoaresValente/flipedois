@@ -17,11 +17,11 @@ import { EventModule } from './event/event.module';
 @Module({
   imports: [
     TypeOrmModule.forRoot({
-      type: 'postgres',
+      type: 'mysql',
       host: 'localhost',
-      port: 5432,
-      username: 'postgres',
-      password: 'postgres',
+      port: 3306,
+      username: 'root',
+      password: 'root',
       database: 'eventos',
       autoLoadEntities: true,
       synchronize: true,

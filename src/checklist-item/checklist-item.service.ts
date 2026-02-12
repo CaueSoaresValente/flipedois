@@ -102,129 +102,142 @@ export class ChecklistItemService {
   // ==============================
   // SEPARAÇÃO (FUNCIONÁRIO)
   // ==============================
-  async separarItem(itemId: number, quantidade: number) {
-    const item = await this.repository.findOne({
-      where: { id: itemId },
-      relations: ['checklist'],
-    });
+async separarItem(itemId: number, quantidade: number) {
+  const item = await this.repository.findOne({
+    where: { id: itemId },
+    relations: ['checklist'],
+  });
 
-    if (!item) {
-      throw new BadRequestException('Item não encontrado');
-    }
+  if (!item) throw new BadRequestException('Item não encontrado');
 
-    if (item.checklist.status !== 'liberado') {
-      throw new BadRequestException(
-        'Checklist não está liberado para separação',
-      );
-    }
-
-    if (quantidade <= 0) {
-      throw new BadRequestException('Quantidade inválida');
-    }
-
-    if (item.quantidadeSeparada + quantidade > item.quantidadePlanejada) {
-      throw new BadRequestException(
-        `Quantidade máxima permitida: ${item.quantidadePlanejada}`,
-      );
-    }
-
-    // 🚫 NÃO mexe em estoque aqui
-    const anterior = item.quantidadeSeparada;
-
-    item.quantidadeSeparada += quantidade;
-    item.statusSeparacao =
-      item.quantidadeSeparada === item.quantidadePlanejada
-        ? 'separado'
-        : 'pendente';
-
-    await this.repository.save(item);
-
-    await this.historyService.registrarSeparacao(
-      item.id,
-      anterior,
-      item.quantidadeSeparada,
-    );
-
-    // 🔥 ATUALIZA STATUS DO CHECKLIST
-    await this.atualizarStatusChecklist(item.checklistId);
-
-    // 🔥 RECARREGA O CHECKLIST ATUALIZADO (CORREÇÃO DO SEU BUG)
-    const checklistAtualizado = await this.checklistRepository.findOne({
-      where: { id: item.checklistId },
-    });
-
-    return {
-      ...item,
-      checklist: checklistAtualizado,
-    };
+  if (item.checklist.status !== 'liberado') {
+    throw new BadRequestException('Checklist não liberado');
   }
+
+  if (quantidade <= 0) {
+    throw new BadRequestException('Quantidade inválida');
+  }
+
+  if (item.quantidadeSeparada + quantidade > item.quantidadePlanejada) {
+    throw new BadRequestException('Excede quantidade planejada');
+  }
+
+  const anterior = item.quantidadeSeparada;
+
+  item.quantidadeSeparada += quantidade;
+
+  item.statusSeparacao =
+    item.quantidadeSeparada === item.quantidadePlanejada
+      ? 'separado'
+      : 'pendente';
+
+  await this.repository.save(item);
+
+  await this.historyService.registrarSeparacao(
+    item.id,
+    anterior,
+    item.quantidadeSeparada,
+  );
+
+  await this.atualizarStatusChecklist(item.checklistId);
+
+  // 🔥 mensagem inteligente
+  let aviso = '';
+
+  if (item.quantidadeSeparada === 0) {
+    aviso = 'Item ainda não separado';
+  } else if (item.quantidadeSeparada < item.quantidadePlanejada) {
+    aviso = `Separação parcial: ${item.quantidadeSeparada}/${item.quantidadePlanejada}`;
+  } else {
+    aviso = 'Item totalmente separado';
+  }
+
+  const checklistAtualizado = await this.checklistRepository.findOne({
+    where: { id: item.checklistId },
+  });
+
+  return {
+    aviso,
+    item,
+    checklist: checklistAtualizado,
+  };
+}
 
   // ==============================
   // DEVOLUÇÃO (FUNCIONÁRIO)
   // ==============================
   async devolverItem(itemId: number, quantidade: number) {
-    const item = await this.repository.findOne({
-      where: { id: itemId },
-    });
+  const item = await this.repository.findOne({
+    where: { id: itemId },
+  });
 
-    if (!item) {
-      throw new BadRequestException('Item não encontrado');
-    }
+  if (!item) throw new BadRequestException('Item não encontrado');
 
-    if (quantidade <= 0) {
-      throw new BadRequestException('Quantidade inválida');
-    }
-
-    if (item.quantidadeDevolvida + quantidade > item.quantidadeSeparada) {
-      throw new BadRequestException(
-        `Máximo para devolução: ${
-          item.quantidadeSeparada - item.quantidadeDevolvida
-        }`,
-      );
-    }
-
-    const equipment = await this.equipmentRepository.findOne({
-      where: { id: item.equipmentId },
-    });
-
-    if (!equipment) {
-      throw new BadRequestException('Equipamento não encontrado');
-    }
-
-    // 🔺 DEVOLVE AO ESTOQUE (UM POR UM)
-    if (equipment.origem === 'interno') {
-      equipment.quantidadeDisponivel += quantidade;
-    }
-
-    await this.equipmentRepository.save(equipment);
-
-    const anterior = item.quantidadeDevolvida;
-
-    item.quantidadeDevolvida += quantidade;
-    item.statusDevolucao =
-      item.quantidadeDevolvida === item.quantidadeSeparada
-        ? 'devolvido'
-        : 'faltando';
-
-    await this.repository.save(item);
-
-    await this.historyService.registrarDevolucao(
-      item.id,
-      anterior,
-      item.quantidadeDevolvida,
-    );
-
-    await this.atualizarStatusChecklist(item.checklistId);
-
-    const checklistAtualizado = await this.checklistRepository.findOne({
-      where: { id: item.checklistId },
-    });
-
-    return {
-      ...item,
-      checklist: checklistAtualizado,
-    };
+  if (quantidade <= 0) {
+    throw new BadRequestException('Quantidade inválida');
   }
+
+  if (item.quantidadeDevolvida + quantidade > item.quantidadeSeparada) {
+    throw new BadRequestException(
+      `Máximo para devolução: ${
+        item.quantidadeSeparada - item.quantidadeDevolvida
+      }`,
+    );
+  }
+
+  const equipment = await this.equipmentRepository.findOne({
+    where: { id: item.equipmentId },
+  });
+
+  if (!equipment) throw new BadRequestException('Equipamento não encontrado');
+
+  // 🔺 devolve estoque apenas interno
+  if (equipment.origem === 'interno') {
+    equipment.quantidadeDisponivel += quantidade;
+    await this.equipmentRepository.save(equipment);
+  }
+
+  const anterior = item.quantidadeDevolvida;
+
+  item.quantidadeDevolvida += quantidade;
+
+  item.statusDevolucao =
+    item.quantidadeDevolvida === item.quantidadeSeparada
+      ? 'devolvido'
+      : 'faltando';
+
+  await this.repository.save(item);
+
+  await this.historyService.registrarDevolucao(
+    item.id,
+    anterior,
+    item.quantidadeDevolvida,
+  );
+
+  await this.atualizarStatusChecklist(item.checklistId);
+
+  // 🔥 aviso inteligente
+  let aviso = '';
+
+  if (item.quantidadeDevolvida === 0) {
+    aviso = 'Nenhum item devolvido';
+  } else if (item.quantidadeDevolvida < item.quantidadeSeparada) {
+    aviso = `Devolução parcial: ${item.quantidadeDevolvida}/${item.quantidadeSeparada}`;
+  } else {
+    aviso = 'Item totalmente devolvido';
+  }
+
+  const checklistAtualizado = await this.checklistRepository.findOne({
+    where: { id: item.checklistId },
+  });
+
+  return {
+    aviso,
+    item,
+    checklist: checklistAtualizado,
+  };
+}
+
 
   // ==============================
   // STATUS AUTOMÁTICO DO CHECKLIST
