@@ -17,7 +17,7 @@ import { TrocarEquipmentDto } from './dto/trocar-equipment.dto';
 
 @Controller('checklist-item')
 export class ChecklistItemController {
-  constructor(private readonly service: ChecklistItemService) {}
+  constructor(private readonly service: ChecklistItemService) { }
 
   // 🔹 ADMIN – LISTAR ITENS
   @Get()
@@ -40,11 +40,22 @@ export class ChecklistItemController {
     return this.service.separarItem(Number(id), dto.quantidadeSeparada);
   }
 
-  @Roles('FUNCIONARIO')
   @Patch(':id/devolver')
-  devolver(@Param('id') id: string, @Body() dto: DevolverItemDto) {
-    return this.service.devolverItem(Number(id), dto.quantidadeDevolvida);
+  devolver(
+    @Param('id') id: string,
+    @Body() dto: {
+      quantidade: number;
+      situacao: 'ok' | 'quebrado' | 'perdido';
+    },
+  ) {
+    return this.service.devolverItem(
+      Number(id),
+      dto.quantidade,
+      dto.situacao,
+    );
   }
+
+
 
   @Roles('ADMIN')
   @Patch(':id')

@@ -8,6 +8,13 @@ import {
 } from 'typeorm';
 import { Checklist } from '../checklist/checklist.entity';
 
+export type StatusDevolucao =
+  | 'pendente'
+  | 'faltando'
+  | 'devolvido'
+  | 'quebrado'
+  | 'perdido';
+
 @Index(['checklistId', 'equipmentId'], { unique: true })
 @Entity('checklist_item')
 export class ChecklistItem {
@@ -44,7 +51,7 @@ export class ChecklistItem {
   quantidadeDevolvida: number;
 
   @Column({ default: 'pendente' })
-  statusDevolucao: 'pendente' | 'faltando' | 'devolvido';
+  statusDevolucao: StatusDevolucao;
 
   @CreateDateColumn()
   createdAt: Date;
