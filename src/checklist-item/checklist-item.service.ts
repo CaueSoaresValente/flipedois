@@ -6,6 +6,7 @@ import { Checklist } from '../checklist/checklist.entity';
 import { Equipment } from '../equipment/equipment.entity';
 import { ChecklistItemHistoryService } from '../checklist-item-history/checklist-item-history.service';
 import { CreateChecklistItemDto } from './dto/create-checklist-item.dto';
+import { Event } from '../event/event.entity';
 
 @Injectable()
 export class ChecklistItemService {
@@ -20,7 +21,10 @@ export class ChecklistItemService {
     private readonly checklistRepository: Repository<Checklist>,
 
     private readonly historyService: ChecklistItemHistoryService,
-  ) { }
+
+    @InjectRepository(Event)
+    private readonly eventRepository: Repository<Event>,
+  ) {}
 
   // ==============================
   // CREATE (ADMIN)
@@ -110,6 +114,10 @@ export class ChecklistItemService {
 
     if (!item) throw new BadRequestException('Item não encontrado');
 
+    if (item.checklist.status === 'cancelado') {
+      throw new BadRequestException('Checklist cancelado');
+    }
+
     if (item.checklist.status !== 'liberado') {
       throw new BadRequestException('Checklist não liberado');
     }
@@ -122,7 +130,31 @@ export class ChecklistItemService {
       throw new BadRequestException('Excede quantidade planejada');
     }
 
+    const equipment = await this.equipmentRepository.findOne({
+      where: { id: item.equipmentId },
+    });
+
+    if (!equipment) {
+      throw new BadRequestException('Equipamento não encontrado');
+    }
+
+    // 🔥 BLOQUEAR SE NÃO HÁ ESTOQUE
+    if (
+      equipment.origem === 'interno' &&
+      quantidade > equipment.quantidadeDisponivel
+    ) {
+      throw new BadRequestException(
+        `Estoque disponível: ${equipment.quantidadeDisponivel}`,
+      );
+    }
+
     const anterior = item.quantidadeSeparada;
+
+    // 🔥 BAIXAR ESTOQUE
+    if (equipment.origem === 'interno') {
+      equipment.quantidadeDisponivel -= quantidade;
+      await this.equipmentRepository.save(equipment);
+    }
 
     item.quantidadeSeparada += quantidade;
 
@@ -141,7 +173,7 @@ export class ChecklistItemService {
 
     await this.atualizarStatusChecklist(item.checklistId);
 
-    // 🔥 mensagem inteligente
+    // mensagem inteligente
     let aviso = '';
 
     if (item.quantidadeSeparada === 0) {
@@ -156,8 +188,14 @@ export class ChecklistItemService {
       where: { id: item.checklistId },
     });
 
+    const alerta = await this.verificarConflitoEventos(
+      item.equipmentId,
+      item.checklistId,
+    );
+
     return {
       aviso,
+      alerta,
       item,
       checklist: checklistAtualizado,
     };
@@ -177,8 +215,7 @@ export class ChecklistItemService {
 
     if (!item) throw new BadRequestException('Item não encontrado');
 
-    if (quantidade <= 0)
-      throw new BadRequestException('Quantidade inválida');
+    if (quantidade <= 0) throw new BadRequestException('Quantidade inválida');
 
     if (item.quantidadeDevolvida + quantidade > item.quantidadeSeparada) {
       throw new BadRequestException('Quantidade excede separação');
@@ -188,8 +225,7 @@ export class ChecklistItemService {
       where: { id: item.equipmentId },
     });
 
-    if (!equipment)
-      throw new BadRequestException('Equipamento não encontrado');
+    if (!equipment) throw new BadRequestException('Equipamento não encontrado');
 
     const anterior = item.quantidadeDevolvida;
 
@@ -231,7 +267,6 @@ export class ChecklistItemService {
     };
   }
 
-
   // ==============================
   // STATUS AUTOMÁTICO DO CHECKLIST
   // ==============================
@@ -254,16 +289,12 @@ export class ChecklistItemService {
     const todosFinalizados = items.every(
       (i) =>
         i.quantidadeSeparada > 0 &&
-        ['devolvido', 'quebrado', 'perdido'].includes(
-          i.statusDevolucao,
-        ),
+        ['devolvido', 'quebrado', 'perdido'].includes(i.statusDevolucao),
     );
-
 
     if (todosFinalizados) {
       checklist.status = 'concluido';
-    }
-    else if (algumDevolvido) {
+    } else if (algumDevolvido) {
       checklist.status = 'pendente_devolucao';
     } else if (todosSeparados) {
       checklist.status = 'em_evento';
@@ -381,5 +412,99 @@ export class ChecklistItemService {
     item.quantidadePlanejada = quantidade;
 
     return this.repository.save(item);
+  }
+
+  async cancelarSeparacao(itemId: number, quantidade: number) {
+    const item = await this.repository.findOne({
+      where: { id: itemId },
+      relations: ['checklist'],
+    });
+
+    if (!item) throw new BadRequestException('Item não encontrado');
+
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida');
+    }
+
+    const disponivelParaCancelar =
+      item.quantidadeSeparada - item.quantidadeDevolvida;
+
+    if (quantidade > disponivelParaCancelar) {
+      throw new BadRequestException(
+        `Só é possível cancelar ${disponivelParaCancelar}`,
+      );
+    }
+
+    const equipment = await this.equipmentRepository.findOne({
+      where: { id: item.equipmentId },
+    });
+
+    if (!equipment) {
+      throw new BadRequestException('Equipamento não encontrado');
+    }
+
+    if (item.checklist.status === 'em_evento') {
+      throw new BadRequestException(
+        'Não é possível cancelar separação durante o evento',
+      );
+    }
+
+    const anterior = item.quantidadeSeparada;
+
+    // 🔥 DEVOLVER ESTOQUE
+    if (equipment.origem === 'interno') {
+      equipment.quantidadeDisponivel += quantidade;
+      await this.equipmentRepository.save(equipment);
+    }
+
+    // 🔥 REDUZIR SEPARAÇÃO
+    item.quantidadeSeparada -= quantidade;
+
+    item.statusSeparacao =
+      item.quantidadeSeparada === item.quantidadePlanejada
+        ? 'separado'
+        : 'pendente';
+
+    await this.repository.save(item);
+
+    await this.historyService.registrarSeparacao(
+      item.id,
+      anterior,
+      item.quantidadeSeparada,
+    );
+
+    await this.atualizarStatusChecklist(item.checklistId);
+
+    return {
+      mensagem: 'Separação cancelada com sucesso',
+      item,
+    };
+  }
+
+  private async verificarConflitoEventos(
+    equipmentId: number,
+    checklistId: number,
+  ) {
+    const eventoAtual = await this.eventRepository.findOne({
+      where: { checklist: { id: checklistId } },
+    });
+
+    if (!eventoAtual) return null;
+
+    const outrosEventos = await this.eventRepository
+      .createQueryBuilder('event')
+      .leftJoinAndSelect('event.checklist', 'checklist')
+      .leftJoinAndSelect('checklist.items', 'items')
+      .where('event.id != :id', { id: eventoAtual.id })
+      .andWhere('(event.dataInicio <= :fim AND event.dataFim >= :inicio)', {
+        inicio: eventoAtual.dataInicio,
+        fim: eventoAtual.dataFim,
+      })
+      .andWhere('items.equipmentId = :equipmentId', { equipmentId })
+      .getMany();
+
+    if (!outrosEventos.length) return null;
+
+    return '⚠ Este equipamento também está planejado para outro evento próximo';
   }
 }

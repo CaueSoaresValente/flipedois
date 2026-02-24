@@ -13,15 +13,16 @@ import { ChecklistItemHistoryModule } from './checklist-item-history/checklist-i
 import { EquipmentModule } from './equipment/equipment.module';
 import { ChecklistTeamModule } from './checklist-team/checklist-team.module';
 import { EventModule } from './event/event.module';
+import { EquipmentOccurrenceModule } from './equipment-occurrence/equipment-occurrence.module';
 
 @Module({
   imports: [
     TypeOrmModule.forRoot({
-      type: 'mysql',
+      type: 'postgres',
       host: 'localhost',
-      port: 3306,
-      username: 'root',
-      password: 'root',
+      port: 5432,
+      username: 'postgres',
+      password: 'postgres',
       database: 'eventos',
       autoLoadEntities: true,
       synchronize: true,
@@ -34,6 +35,7 @@ import { EventModule } from './event/event.module';
     EquipmentModule,
     ChecklistTeamModule,
     EventModule,
+    EquipmentOccurrenceModule,
   ],
   providers: [
     {

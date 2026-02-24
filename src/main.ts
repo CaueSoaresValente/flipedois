@@ -6,17 +6,23 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // CORS para frontend se comunicar com backend
+  app.enableCors({
+    origin: ['http://localhost:5173', 'http://localhost:3001'],
+    credentials: true,
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // remove campos extras
-      forbidNonWhitelisted: true, // erro se mandar campo que não existe
+      whitelist: true,
+      forbidNonWhitelisted: true,
       transform: true,
     }),
   );
 
   const config = new DocumentBuilder()
-    .setTitle('API Eventos')
-    .setDescription('Sistema de gestão de equipamentos')
+    .setTitle('API Eventos - Flipe')
+    .setDescription('Sistema de gestão de equipamentos para eventos')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
@@ -25,5 +31,7 @@ async function bootstrap() {
   SwaggerModule.setup('docs', app, document);
 
   await app.listen(3000);
+  console.log('🚀 Backend rodando em http://localhost:3000');
+  console.log('📄 Swagger: http://localhost:3000/docs');
 }
 bootstrap();

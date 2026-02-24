@@ -14,13 +14,14 @@ export class ChecklistItemHistoryService {
     checklistItemId: number,
     quantidadeAnterior: number,
     quantidadeNova: number,
+    usuario = 'sistema',
   ) {
     return this.repository.save({
       checklistItemId,
       acao: 'SEPARACAO',
       quantidadeAnterior,
       quantidadeNova,
-      usuario: 'funcionario',
+      usuario,
     });
   }
 
@@ -28,13 +29,14 @@ export class ChecklistItemHistoryService {
     checklistItemId: number,
     quantidadeAnterior: number,
     quantidadeNova: number,
+    usuario = 'sistema',
   ) {
     return this.repository.save({
       checklistItemId,
       acao: 'DEVOLUCAO',
       quantidadeAnterior,
       quantidadeNova,
-      usuario: 'funcionario',
+      usuario,
     });
   }
 
@@ -42,6 +44,12 @@ export class ChecklistItemHistoryService {
     return this.repository.find({
       where: { checklistItemId },
       order: { createdAt: 'ASC' },
+    });
+  }
+
+  async findAll() {
+    return this.repository.find({
+      order: { createdAt: 'DESC' },
     });
   }
 }

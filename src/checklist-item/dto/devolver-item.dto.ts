@@ -1,7 +1,13 @@
-import { IsInt, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class DevolverItemDto {
-  @IsInt()
-  @Min(1)
-  quantidadeDevolvida: number;
+  @IsNumber()
+  quantidade: number;
+
+  @IsString()
+  situacao: 'ok' | 'quebrado' | 'perdido';
+
+  @IsOptional()
+  @IsString()
+  observacao?: string;
 }

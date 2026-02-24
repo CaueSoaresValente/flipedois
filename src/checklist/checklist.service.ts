@@ -16,11 +16,8 @@ export class ChecklistService {
 
     @InjectRepository(Equipment)
     private readonly equipmentRepository: Repository<Equipment>,
-  ) { }
+  ) {}
 
-  // ==============================
-  // CREATE
-  // ==============================
   async create(nome: string) {
     if (!nome || nome.trim().length === 0) {
       throw new BadRequestException('Nome do checklist é obrigatório');
@@ -34,18 +31,30 @@ export class ChecklistService {
     return this.checklistRepository.save(checklist);
   }
 
-  // ==============================
-  // LISTAR
-  // ==============================
   async findAll() {
     return this.checklistRepository.find({
       relations: ['items'],
+      order: { createdAt: 'DESC' },
     });
   }
 
-  // ==============================
-  // LIBERAR (BAIXA ESTOQUE AQUI)
-  // ==============================
+  async findOne(id: number) {
+    const checklist = await this.checklistRepository.findOne({
+      where: { id },
+      relations: ['items'],
+    });
+
+    if (!checklist) {
+      throw new BadRequestException('Checklist não encontrado');
+    }
+
+    return checklist;
+  }
+
+  /**
+   * LIBERAR: apenas valida estoque e muda status.
+   * A baixa de estoque real acontece na SEPARAÇÃO (checklist-item.service).
+   */
   async liberar(id: number) {
     const checklist = await this.checklistRepository.findOne({
       where: { id },
@@ -66,7 +75,7 @@ export class ChecklistService {
       );
     }
 
-    // 🔹 AGRUPA QUANTIDADE POR EQUIPAMENTO
+    // Agrupa quantidade por equipamento para validação
     const mapa = new Map<number, number>();
 
     for (const item of checklist.items) {
@@ -74,7 +83,7 @@ export class ChecklistService {
       mapa.set(item.equipmentId, atual + item.quantidadePlanejada);
     }
 
-    // 🔹 VALIDA ESTOQUE
+    // Valida se há estoque suficiente (apenas validação, sem baixa)
     for (const [equipmentId, quantidade] of mapa.entries()) {
       const equipment = await this.equipmentRepository.findOne({
         where: { id: equipmentId },
@@ -84,37 +93,21 @@ export class ChecklistService {
         throw new BadRequestException('Equipamento não encontrado');
       }
 
-      if (quantidade > equipment.quantidadeDisponivel) {
+      if (
+        equipment.origem === 'interno' &&
+        quantidade > equipment.quantidadeDisponivel
+      ) {
         throw new BadRequestException(
           `Estoque insuficiente para ${equipment.nome}. Disponível: ${equipment.quantidadeDisponivel}`,
         );
       }
     }
 
-    // 🔻 BAIXA ESTOQUE
-    for (const [equipmentId, quantidade] of mapa.entries()) {
-      const equipment = await this.equipmentRepository.findOne({
-        where: { id: equipmentId },
-      });
-
-      if (!equipment) {
-        throw new BadRequestException('Equipamento não encontrado');
-      }
-
-      if (equipment.origem === 'interno') {
-        equipment.quantidadeDisponivel -= quantidade;
-      }
-
-      await this.equipmentRepository.save(equipment);
-    }
-
+    // Apenas muda o status — estoque é deduzido na separação
     checklist.status = 'liberado';
     return this.checklistRepository.save(checklist);
   }
 
-  // ==============================
-  // CLONAR CHECKLIST
-  // ==============================
   async clonar(checklistId: number) {
     const checklistOriginal = await this.checklistRepository.findOne({
       where: { id: checklistId },
@@ -130,7 +123,8 @@ export class ChecklistService {
       status: 'rascunho',
     });
 
-    const checklistSalvo = await this.checklistRepository.save(novoChecklist);
+    const checklistSalvo =
+      await this.checklistRepository.save(novoChecklist);
 
     const alertas: string[] = [];
 
@@ -160,6 +154,7 @@ export class ChecklistService {
         statusSeparacao: 'pendente',
         quantidadeDevolvida: 0,
         statusDevolucao: 'pendente',
+        setor: item.setor,
       });
 
       await this.checklistItemRepository.save(novoItem);
@@ -181,21 +176,34 @@ export class ChecklistService {
       throw new BadRequestException('Checklist não encontrado');
     }
 
-    if (checklist.status !== 'liberado') {
+    if (checklist.status === 'em_evento') {
       throw new BadRequestException(
-        'Só é possível cancelar checklists liberados',
+        'Não é possível cancelar checklist em evento',
       );
     }
 
-    // 🔁 DEVOLVE ESTOQUE
-    for (const item of checklist.items) {
-      const equipment = await this.equipmentRepository.findOne({
-        where: { id: item.equipmentId },
-      });
+    if (
+      checklist.status !== 'liberado' &&
+      checklist.status !== 'rascunho'
+    ) {
+      throw new BadRequestException(
+        'Só é possível cancelar checklists em rascunho ou liberados',
+      );
+    }
 
-      if (equipment) {
-        equipment.quantidadeDisponivel += item.quantidadePlanejada;
-        await this.equipmentRepository.save(equipment);
+    // Devolve estoque se já houve separação
+    if (checklist.status === 'liberado' && checklist.items) {
+      for (const item of checklist.items) {
+        if (item.quantidadeSeparada > 0) {
+          const equipment = await this.equipmentRepository.findOne({
+            where: { id: item.equipmentId },
+          });
+
+          if (equipment && equipment.origem === 'interno') {
+            equipment.quantidadeDisponivel += item.quantidadeSeparada;
+            await this.equipmentRepository.save(equipment);
+          }
+        }
       }
     }
 
@@ -213,7 +221,8 @@ export class ChecklistService {
       relations: ['items'],
     });
 
-    if (!checklist) throw new BadRequestException('Checklist não encontrado');
+    if (!checklist)
+      throw new BadRequestException('Checklist não encontrado');
 
     let pendentesSeparacao = 0;
     let pendentesDevolucao = 0;
@@ -234,9 +243,7 @@ export class ChecklistService {
     const alertas: string[] = [];
 
     if (pendentesSeparacao > 0) {
-      alertas.push(
-        `${pendentesSeparacao} item(ns) pendentes de separação`,
-      );
+      alertas.push(`${pendentesSeparacao} item(ns) pendentes de separação`);
     }
 
     if (pendentesDevolucao > 0) {
@@ -255,6 +262,4 @@ export class ChecklistService {
       alertas,
     };
   }
-
-
 }
