@@ -30,6 +30,7 @@ api.interceptors.response.use(
 // =====================
 export const equipmentApi = {
   getAll: () => api.get('/equipment'),
+  search: (q: string) => api.get(`/equipment/search?q=${encodeURIComponent(q)}`),
   create: (data: {
     nome: string;
     descricao: string;
@@ -47,12 +48,15 @@ export const equipmentApi = {
 export const checklistApi = {
   getAll: () => api.get('/checklist'),
   getOne: (id: number) => api.get(`/checklist/${id}`),
-  create: (nome: string) => api.post('/checklist', { nome }),
+  create: (nome: string, eventId?: number) =>
+    api.post('/checklist', { nome, ...(eventId ? { eventId } : {}) }),
   liberar: (id: number) => api.patch(`/checklist/${id}/liberar`),
   cancelar: (id: number, motivo: string) =>
     api.patch(`/checklist/${id}/cancelar`, { motivo }),
   clonar: (id: number) => api.post(`/checklist/${id}/clonar`),
   getAlertas: (id: number) => api.get(`/checklist/${id}/alertas`),
+  vincularEvento: (id: number, eventId: number) =>
+    api.patch(`/checklist/${id}/vincular-evento`, { eventId }),
 };
 
 // =====================
@@ -134,4 +138,23 @@ export const userApi = {
     senha: string;
     role?: string;
   }) => api.post('/user', data),
+};
+
+// =====================
+// Audit Log API
+// =====================
+export const auditLogApi = {
+  getAll: (params?: {
+    entity?: string;
+    action?: string;
+    limit?: number;
+    offset?: number;
+  }) => api.get('/audit-log', { params }),
+};
+
+// =====================
+// Dashboard API
+// =====================
+export const dashboardApi = {
+  getStats: () => api.get('/dashboard/stats'),
 };

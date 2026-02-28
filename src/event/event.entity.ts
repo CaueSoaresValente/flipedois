@@ -2,8 +2,6 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
-  OneToOne,
-  JoinColumn,
   OneToMany,
   CreateDateColumn,
 } from 'typeorm';
@@ -33,9 +31,14 @@ export class Event {
   @Column({ nullable: true })
   observacoes: string;
 
-  @OneToOne(() => Checklist)
-  @JoinColumn()
-  checklist: Checklist;
+  // Changed from OneToOne to OneToMany — an event can have multiple checklists
+  @OneToMany(() => Checklist, (checklist) => checklist.event)
+  checklists: Checklist[];
+
+  // Legacy single checklist accessor (kept for backward compatibility)
+  get checklist(): Checklist | undefined {
+    return this.checklists?.[0];
+  }
 
   @OneToMany(() => EventTeam, (team) => team.event, {
     cascade: true,

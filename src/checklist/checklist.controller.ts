@@ -15,17 +15,17 @@ import { CancelarChecklistDto } from './dto/cancelar-checklist.dto';
 
 @Controller('checklist')
 export class ChecklistController {
-  constructor(private readonly service: ChecklistService) {}
+  constructor(private readonly service: ChecklistService) { }
 
   @Roles('ADMIN')
   @Post()
-  create(@Body() dto: CreateChecklistDto) {
-    return this.service.create(dto.nome);
+  create(@Body() dto: CreateChecklistDto, @Req() req: any) {
+    return this.service.create(dto.nome, dto.eventId, req.user.sub, req.user.email);
   }
 
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Req() req: any) {
+    return this.service.findAll(req.user.role);
   }
 
   @Get(':id')
@@ -35,14 +35,24 @@ export class ChecklistController {
 
   @Roles('ADMIN')
   @Patch(':id/liberar')
-  liberar(@Param('id', ParseIntPipe) id: number) {
-    return this.service.liberar(id);
+  liberar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.liberar(id, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id/vincular-evento')
+  vincularEvento(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('eventId', ParseIntPipe) eventId: number,
+    @Req() req: any,
+  ) {
+    return this.service.vincularEvento(id, eventId, req.user.sub, req.user.email);
   }
 
   @Roles('ADMIN')
   @Post(':id/clonar')
-  clonar(@Param('id', ParseIntPipe) id: number) {
-    return this.service.clonar(id);
+  clonar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.clonar(id, req.user.sub, req.user.email);
   }
 
   @Roles('ADMIN')
@@ -52,7 +62,7 @@ export class ChecklistController {
     @Body() dto: CancelarChecklistDto,
     @Req() req: any,
   ) {
-    return this.service.cancelar(id, dto.motivo, req.user.email);
+    return this.service.cancelar(id, dto.motivo, req.user.email, req.user.sub);
   }
 
   @Get(':id/alertas')

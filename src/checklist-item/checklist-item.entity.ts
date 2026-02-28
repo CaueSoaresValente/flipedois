@@ -5,6 +5,7 @@ import {
   ManyToOne,
   CreateDateColumn,
   Index,
+  VersionColumn,
 } from 'typeorm';
 import { Checklist } from '../checklist/checklist.entity';
 
@@ -61,4 +62,7 @@ export class ChecklistItem {
     default: 'som',
   })
   setor: 'som' | 'luz' | 'video' | 'estrutura';
+
+  @VersionColumn()
+  version: number;
 }

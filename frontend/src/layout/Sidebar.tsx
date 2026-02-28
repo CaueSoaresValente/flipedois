@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Users,
   ChevronLeft,
+  ScrollText,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -21,6 +22,7 @@ const navItems = [
 
 const adminItems = [
   { to: '/usuarios', label: 'Usuários', icon: Users },
+  { to: '/logs', label: 'Logs', icon: ScrollText },
 ];
 
 export default function Sidebar() {
@@ -32,9 +34,8 @@ export default function Sidebar() {
 
   return (
     <aside
-      className={`${
-        collapsed ? 'w-[72px]' : 'w-[260px]'
-      } h-screen bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-all duration-300 ease-in-out`}
+      className={`${collapsed ? 'w-[72px]' : 'w-[260px]'
+        } h-screen bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-all duration-300 ease-in-out`}
     >
       {/* Logo */}
       <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 dark:border-slate-700">
@@ -63,11 +64,10 @@ export default function Sidebar() {
             <NavLink
               key={item.to}
               to={item.to}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group ${
-                isActive
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group ${isActive
                   ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
                   : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 hover:text-slate-700 dark:hover:text-slate-200'
-              }`}
+                }`}
               title={collapsed ? item.label : undefined}
             >
               <item.icon
@@ -92,9 +92,8 @@ export default function Sidebar() {
         >
           <ChevronLeft
             size={18}
-            className={`transition-transform duration-300 ${
-              collapsed ? 'rotate-180' : ''
-            }`}
+            className={`transition-transform duration-300 ${collapsed ? 'rotate-180' : ''
+              }`}
           />
           {!collapsed && <span>Recolher</span>}
         </button>

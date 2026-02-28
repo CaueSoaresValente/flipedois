@@ -1,4 +1,4 @@
-import { IsString, IsDateString, IsInt, ValidateNested } from 'class-validator';
+import { IsString, IsDateString, IsInt, ValidateNested, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class TeamDto {
@@ -25,13 +25,16 @@ export class CreateEventDto {
   @IsDateString()
   dataFim: string;
 
+  @IsOptional()
   @IsInt()
-  checklistId: number;
+  checklistId?: number;
 
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => TeamDto)
-  equipe: TeamDto[];
+  equipe?: TeamDto[];
 
+  @IsOptional()
   @IsString()
   observacoes?: string;
 }

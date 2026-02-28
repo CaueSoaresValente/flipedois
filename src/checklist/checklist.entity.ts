@@ -3,9 +3,13 @@ import {
   PrimaryGeneratedColumn,
   Column,
   OneToMany,
+  ManyToOne,
+  JoinColumn,
   CreateDateColumn,
+  VersionColumn,
 } from 'typeorm';
 import { ChecklistItem } from '../checklist-item/checklist-item.entity';
+import { Event } from '../event/event.entity';
 
 /**
  * 🔒 STATUS OFICIAL DO CHECKLIST
@@ -39,9 +43,19 @@ export class Checklist {
   @Column({ type: 'varchar', default: 'rascunho' })
   status: ChecklistStatus;
 
+  @Column({ nullable: true })
+  eventId?: number;
+
+  @ManyToOne(() => Event, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'eventId' })
+  event?: Event;
+
   @OneToMany(() => ChecklistItem, (item) => item.checklist)
   items: ChecklistItem[];
 
   @CreateDateColumn()
   createdAt: Date;
+
+  @VersionColumn()
+  version: number;
 }

@@ -4,22 +4,34 @@ import {
   Calendar,
   ClipboardList,
   AlertTriangle,
-  TrendingUp,
   Activity,
+  TrendingDown,
 } from 'lucide-react';
 import {
-  equipmentApi,
+  dashboardApi,
   checklistApi,
-  eventApi,
-  occurrenceApi,
 } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
+import { useAuth } from '../contexts/AuthContext';
 
-interface Stats {
-  equipamentos: number;
-  eventos: number;
-  checklists: number;
-  ocorrencias: number;
+interface DashboardStats {
+  equipamentos: {
+    total: number;
+    unidadesEmUso: number;
+    unidadesDisponiveis: number;
+    estoqueBaixo: { id: number; nome: string; disponivel: number; total: number }[];
+  };
+  eventos: {
+    total: number;
+    ativos: number;
+  };
+  checklists: {
+    total: number;
+    porStatus: Record<string, number>;
+  };
+  ocorrencias: {
+    pendentes: number;
+  };
 }
 
 interface RecentChecklist {
@@ -30,16 +42,10 @@ interface RecentChecklist {
 }
 
 export default function Dashboard() {
-  const [stats, setStats] = useState<Stats>({
-    equipamentos: 0,
-    eventos: 0,
-    checklists: 0,
-    ocorrencias: 0,
-  });
-  const [recentChecklists, setRecentChecklists] = useState<
-    RecentChecklist[]
-  >([]);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [recentChecklists, setRecentChecklists] = useState<RecentChecklist[]>([]);
   const [loading, setLoading] = useState(true);
+  const { isAdmin } = useAuth();
 
   useEffect(() => {
     loadData();
@@ -47,60 +53,19 @@ export default function Dashboard() {
 
   async function loadData() {
     try {
-      const [eqRes, evRes, clRes, ocRes] = await Promise.all([
-        equipmentApi.getAll(),
-        eventApi.getAll(),
-        checklistApi.getAll(),
-        occurrenceApi.getAll(),
-      ]);
-
-      setStats({
-        equipamentos: eqRes.data.length,
-        eventos: evRes.data.length,
-        checklists: clRes.data.length,
-        ocorrencias: ocRes.data.filter(
-          (o: any) => o.status === 'PENDENTE'
-        ).length,
-      });
-
+      const clRes = await checklistApi.getAll();
       setRecentChecklists(clRes.data.slice(0, 5));
+
+      if (isAdmin) {
+        const statsRes = await dashboardApi.getStats();
+        setStats(statsRes.data);
+      }
     } catch (err) {
       console.error('Erro ao carregar dashboard:', err);
     } finally {
       setLoading(false);
     }
   }
-
-  const cards = [
-    {
-      label: 'Equipamentos',
-      value: stats.equipamentos,
-      icon: Package,
-      gradient: 'from-blue-500 to-blue-600',
-      bgLight: 'bg-blue-50 dark:bg-blue-900/20',
-    },
-    {
-      label: 'Eventos',
-      value: stats.eventos,
-      icon: Calendar,
-      gradient: 'from-purple-500 to-purple-600',
-      bgLight: 'bg-purple-50 dark:bg-purple-900/20',
-    },
-    {
-      label: 'Checklists',
-      value: stats.checklists,
-      icon: ClipboardList,
-      gradient: 'from-emerald-500 to-emerald-600',
-      bgLight: 'bg-emerald-50 dark:bg-emerald-900/20',
-    },
-    {
-      label: 'Ocorrências Pendentes',
-      value: stats.ocorrencias,
-      icon: AlertTriangle,
-      gradient: 'from-amber-500 to-amber-600',
-      bgLight: 'bg-amber-50 dark:bg-amber-900/20',
-    },
-  ];
 
   if (loading) {
     return (
@@ -109,6 +74,43 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const cards = stats
+    ? [
+      {
+        label: 'Equipamentos',
+        value: stats.equipamentos.total,
+        sub: `${stats.equipamentos.unidadesDisponiveis} unid. disponíveis`,
+        icon: Package,
+        bgLight: 'bg-blue-50 dark:bg-blue-900/20',
+        color: 'text-blue-500',
+      },
+      {
+        label: 'Eventos Ativos',
+        value: stats.eventos.ativos,
+        sub: `${stats.eventos.total} total`,
+        icon: Calendar,
+        bgLight: 'bg-purple-50 dark:bg-purple-900/20',
+        color: 'text-purple-500',
+      },
+      {
+        label: 'Checklists',
+        value: stats.checklists.total,
+        sub: `${stats.checklists.porStatus?.liberado ?? 0} liberados`,
+        icon: ClipboardList,
+        bgLight: 'bg-emerald-50 dark:bg-emerald-900/20',
+        color: 'text-emerald-500',
+      },
+      {
+        label: 'Ocorrências Pendentes',
+        value: stats.ocorrencias.pendentes,
+        sub: 'aguardando confirmação',
+        icon: AlertTriangle,
+        bgLight: 'bg-amber-50 dark:bg-amber-900/20',
+        color: 'text-amber-500',
+      },
+    ]
+    : [];
 
   return (
     <div className="space-y-6">
@@ -125,33 +127,57 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {cards.map((card) => (
-          <div
-            key={card.label}
-            className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 hover:shadow-lg transition-shadow duration-300"
-          >
-            <div className="flex items-center justify-between mb-3">
+      {/* Stats Cards — ADMIN only */}
+      {isAdmin && stats && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {cards.map((card) => (
               <div
-                className={`w-10 h-10 ${card.bgLight} rounded-lg flex items-center justify-center`}
+                key={card.label}
+                className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 hover:shadow-lg transition-shadow duration-300"
               >
-                <card.icon
-                  size={20}
-                  className={`text-${card.gradient.split('-')[1]}-500`}
-                />
+                <div className="flex items-center justify-between mb-3">
+                  <div
+                    className={`w-10 h-10 ${card.bgLight} rounded-lg flex items-center justify-center`}
+                  >
+                    <card.icon size={20} className={card.color} />
+                  </div>
+                </div>
+                <p className="text-2xl font-bold text-slate-800 dark:text-white">
+                  {card.value}
+                </p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  {card.label}
+                </p>
+                <p className="text-xs text-slate-400 mt-0.5">{card.sub}</p>
               </div>
-              <TrendingUp size={16} className="text-green-500" />
-            </div>
-            <p className="text-2xl font-bold text-slate-800 dark:text-white">
-              {card.value}
-            </p>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              {card.label}
-            </p>
+            ))}
           </div>
-        ))}
-      </div>
+
+          {/* Low Stock Alert */}
+          {stats.equipamentos.estoqueBaixo.length > 0 && (
+            <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-700/50 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingDown size={18} className="text-amber-500" />
+                <h3 className="font-semibold text-amber-700 dark:text-amber-400 text-sm">
+                  Estoque Baixo
+                </h3>
+              </div>
+              <div className="space-y-1">
+                {stats.equipamentos.estoqueBaixo.map((eq) => (
+                  <p
+                    key={eq.id}
+                    className="text-sm text-amber-600 dark:text-amber-300"
+                  >
+                    {eq.nome}: <strong>{eq.disponivel}</strong>/{eq.total}{' '}
+                    disponíveis
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Recent Checklists */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">

@@ -1,18 +1,21 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { Equipment } from './equipment.entity';
 import { CreateEquipmentDto } from './dto/create-equipment.dto';
 import { UpdateEquipmentDto } from './dto/update-equipment.dto';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class EquipmentService {
   constructor(
     @InjectRepository(Equipment)
     private readonly repository: Repository<Equipment>,
-  ) {}
 
-  async create(dto: CreateEquipmentDto) {
+    private readonly auditLogService: AuditLogService,
+  ) { }
+
+  async create(dto: CreateEquipmentDto, userId?: number, userEmail?: string) {
     if (dto.quantidadeTotal <= 0 && dto.origem === 'interno') {
       throw new BadRequestException('Quantidade inválida');
     }
@@ -29,7 +32,19 @@ export class EquipmentService {
       ativo: true,
     });
 
-    return this.repository.save(equipment);
+    const saved = await this.repository.save(equipment);
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'CREATE',
+      'equipment',
+      saved.id,
+      { nome: dto.nome, quantidadeTotal: dto.quantidadeTotal, origem },
+      `Equipamento "${dto.nome}" criado`,
+    );
+
+    return saved;
   }
 
   async findAll() {
@@ -39,12 +54,30 @@ export class EquipmentService {
     });
   }
 
-  async update(id: number, dto: UpdateEquipmentDto) {
+  // Fix #1: Search endpoint for autocomplete
+  async search(query: string, setor?: string) {
+    const where: any = { ativo: true };
+
+    if (query) {
+      where.nome = ILike(`%${query}%`);
+    }
+
+    return this.repository.find({
+      where,
+      order: { nome: 'ASC' },
+      take: 20,
+    });
+  }
+
+  // Fix #3: Explicit field mapping instead of Object.assign
+  async update(id: number, dto: UpdateEquipmentDto, userId?: number, userEmail?: string) {
     const equipment = await this.repository.findOne({ where: { id } });
 
     if (!equipment) {
       throw new BadRequestException('Equipamento não encontrado');
     }
+
+    const changes: Record<string, any> = {};
 
     const quantidadeEmUso =
       equipment.quantidadeTotal - equipment.quantidadeDisponivel;
@@ -52,28 +85,68 @@ export class EquipmentService {
     if (dto.quantidadeTotal !== undefined) {
       if (dto.quantidadeTotal < quantidadeEmUso) {
         throw new BadRequestException(
-          `Existem ${quantidadeEmUso} unidades em uso`,
+          `Existem ${quantidadeEmUso} unidades em uso. Mínimo permitido: ${quantidadeEmUso}`,
         );
       }
 
       const diferenca = dto.quantidadeTotal - equipment.quantidadeTotal;
+      changes.quantidadeTotal = { de: equipment.quantidadeTotal, para: dto.quantidadeTotal };
       equipment.quantidadeDisponivel += diferenca;
       equipment.quantidadeTotal = dto.quantidadeTotal;
     }
 
-    if (dto.nome !== undefined && dto.nome.trim() === '') {
-      throw new BadRequestException('Nome não pode ser vazio');
+    if (dto.nome !== undefined) {
+      if (dto.nome.trim() === '') {
+        throw new BadRequestException('Nome não pode ser vazio');
+      }
+      changes.nome = { de: equipment.nome, para: dto.nome };
+      equipment.nome = dto.nome;
     }
 
-    if (dto.descricao !== undefined && dto.descricao.trim() === '') {
-      throw new BadRequestException('Descrição não pode ser vazia');
+    if (dto.descricao !== undefined) {
+      if (dto.descricao.trim() === '') {
+        throw new BadRequestException('Descrição não pode ser vazia');
+      }
+      changes.descricao = { de: equipment.descricao, para: dto.descricao };
+      equipment.descricao = dto.descricao;
     }
 
-    Object.assign(equipment, dto);
-    return this.repository.save(equipment);
+    if (dto.ativo !== undefined) {
+      changes.ativo = { de: equipment.ativo, para: dto.ativo };
+      equipment.ativo = dto.ativo;
+    }
+
+    if (dto.origem !== undefined) {
+      changes.origem = { de: equipment.origem, para: dto.origem };
+      equipment.origem = dto.origem;
+    }
+
+    if (dto.fornecedor !== undefined) {
+      changes.fornecedor = { de: equipment.fornecedor, para: dto.fornecedor };
+      equipment.fornecedor = dto.fornecedor;
+    }
+
+    // Ensure stock never goes negative
+    if (equipment.quantidadeDisponivel < 0) {
+      throw new BadRequestException('Estoque disponível não pode ficar negativo');
+    }
+
+    const saved = await this.repository.save(equipment);
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'UPDATE',
+      'equipment',
+      id,
+      changes,
+      `Equipamento "${equipment.nome}" atualizado`,
+    );
+
+    return saved;
   }
 
-  async desativar(id: number) {
+  async desativar(id: number, userId?: number, userEmail?: string) {
     const equipment = await this.repository.findOne({ where: { id } });
 
     if (!equipment) {
@@ -81,6 +154,18 @@ export class EquipmentService {
     }
 
     equipment.ativo = false;
-    return this.repository.save(equipment);
+    const saved = await this.repository.save(equipment);
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'DESATIVAR',
+      'equipment',
+      id,
+      { ativo: false },
+      `Equipamento "${equipment.nome}" desativado`,
+    );
+
+    return saved;
   }
 }

@@ -7,8 +7,7 @@ import { CreateEventDto } from './dto/create-event.dto';
 import { CreateEventTeamDto } from './dto/create-event-team.dto';
 import { UpdateEventTeamDto } from './dto/update-event-team.dto';
 import { EventTeam } from './event-team.entity';
-import { Equipment } from '../equipment/equipment.entity';
-import { EquipmentReservation } from '../equipment/equipment-reservation.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class EventService {
@@ -22,22 +21,10 @@ export class EventService {
     @InjectRepository(EventTeam)
     private readonly teamRepo: Repository<EventTeam>,
 
-    @InjectRepository(Equipment)
-    private equipmentRepo: Repository<Equipment>,
+    private readonly auditLogService: AuditLogService,
+  ) { }
 
-    @InjectRepository(EquipmentReservation)
-    private reservationRepo: Repository<EquipmentReservation>,
-  ) {}
-
-  async create(dto: CreateEventDto) {
-    const checklist = await this.checklistRepo.findOne({
-      where: { id: dto.checklistId },
-    });
-
-    if (!checklist) {
-      throw new BadRequestException('Checklist não encontrado');
-    }
-
+  async create(dto: CreateEventDto, userId?: number, userEmail?: string) {
     const event = this.repo.create({
       nome: dto.nome,
       cliente: dto.cliente,
@@ -45,16 +32,38 @@ export class EventService {
       dataInicio: new Date(dto.dataInicio),
       dataFim: new Date(dto.dataFim),
       observacoes: dto.observacoes,
-      checklist,
       equipe: dto.equipe,
     });
 
-    return this.repo.save(event);
+    const saved = await this.repo.save(event);
+
+    // If checklistId provided, link it to this event
+    if (dto.checklistId) {
+      const checklist = await this.checklistRepo.findOne({
+        where: { id: dto.checklistId },
+      });
+      if (checklist) {
+        checklist.eventId = saved.id;
+        await this.checklistRepo.save(checklist);
+      }
+    }
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'CREATE',
+      'event',
+      saved.id,
+      { nome: dto.nome, cliente: dto.cliente, local: dto.local },
+      `Evento "${dto.nome}" criado`,
+    );
+
+    return saved;
   }
 
   findAll() {
     return this.repo.find({
-      relations: ['checklist', 'equipe'],
+      relations: ['checklists', 'equipe'],
       order: { dataInicio: 'DESC' },
     });
   }
@@ -62,7 +71,7 @@ export class EventService {
   async findOne(id: number) {
     const event = await this.repo.findOne({
       where: { id },
-      relations: ['checklist', 'checklist.items', 'equipe'],
+      relations: ['checklists', 'checklists.items', 'equipe'],
     });
 
     if (!event) {

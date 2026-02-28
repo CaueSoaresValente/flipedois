@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Checklist } from './checklist.entity';
 import { ChecklistItem } from '../checklist-item/checklist-item.entity';
 import { Equipment } from '../equipment/equipment.entity';
+import { Event } from '../event/event.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class ChecklistService {
@@ -16,32 +18,69 @@ export class ChecklistService {
 
     @InjectRepository(Equipment)
     private readonly equipmentRepository: Repository<Equipment>,
-  ) {}
 
-  async create(nome: string) {
+    @InjectRepository(Event)
+    private readonly eventRepository: Repository<Event>,
+
+    private readonly dataSource: DataSource,
+    private readonly auditLogService: AuditLogService,
+  ) { }
+
+  async create(nome: string, eventId?: number, userId?: number, userEmail?: string) {
     if (!nome || nome.trim().length === 0) {
       throw new BadRequestException('Nome do checklist é obrigatório');
+    }
+
+    // Validate event if provided
+    if (eventId) {
+      const event = await this.eventRepository.findOne({ where: { id: eventId } });
+      if (!event) {
+        throw new BadRequestException('Evento não encontrado');
+      }
     }
 
     const checklist = this.checklistRepository.create({
       nome,
       status: 'rascunho',
+      eventId: eventId ?? undefined,
     });
 
-    return this.checklistRepository.save(checklist);
+    const saved = await this.checklistRepository.save(checklist);
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'CREATE',
+      'checklist',
+      saved.id,
+      { nome, eventId },
+      `Checklist "${nome}" criado`,
+    );
+
+    return saved;
   }
 
-  async findAll() {
-    return this.checklistRepository.find({
-      relations: ['items'],
-      order: { createdAt: 'DESC' },
-    });
+  async findAll(userRole?: string) {
+    const query = this.checklistRepository
+      .createQueryBuilder('checklist')
+      .leftJoinAndSelect('checklist.items', 'items')
+      .leftJoinAndSelect('checklist.event', 'event')
+      .orderBy('checklist.createdAt', 'DESC');
+
+    // FUNCIONÁRIO only sees released and beyond checklists
+    if (userRole === 'FUNCIONARIO') {
+      query.where('checklist.status IN (:...statuses)', {
+        statuses: ['liberado', 'em_evento', 'pendente_devolucao', 'concluido'],
+      });
+    }
+
+    return query.getMany();
   }
 
   async findOne(id: number) {
     const checklist = await this.checklistRepository.findOne({
       where: { id },
-      relations: ['items'],
+      relations: ['items', 'event'],
     });
 
     if (!checklist) {
@@ -52,13 +91,85 @@ export class ChecklistService {
   }
 
   /**
-   * LIBERAR: apenas valida estoque e muda status.
-   * A baixa de estoque real acontece na SEPARAÇÃO (checklist-item.service).
+   * LIBERAR: validates event, stock, and changes status.
+   * Uses a database transaction for atomicity.
    */
-  async liberar(id: number) {
+  async liberar(id: number, userId?: number, userEmail?: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const checklist = await manager.findOne(Checklist, {
+        where: { id },
+        relations: ['items'],
+      });
+
+      if (!checklist) {
+        throw new BadRequestException('Checklist não encontrado');
+      }
+
+      if (checklist.status !== 'rascunho') {
+        throw new BadRequestException('Checklist não pode ser liberado. Status atual: ' + checklist.status);
+      }
+
+      // Fix #14: Validate that checklist has an event linked
+      if (!checklist.eventId) {
+        throw new BadRequestException(
+          'Checklist precisa estar vinculado a um evento para ser liberado',
+        );
+      }
+
+      if (!checklist.items || checklist.items.length === 0) {
+        throw new BadRequestException(
+          'Checklist precisa ter ao menos um item para ser liberado',
+        );
+      }
+
+      // Group quantities by equipment for validation
+      const mapa = new Map<number, number>();
+
+      for (const item of checklist.items) {
+        const atual = mapa.get(item.equipmentId) ?? 0;
+        mapa.set(item.equipmentId, atual + item.quantidadePlanejada);
+      }
+
+      // Validate stock (no deduction — that happens during separation)
+      for (const [equipmentId, quantidade] of mapa.entries()) {
+        const equipment = await manager.findOne(Equipment, {
+          where: { id: equipmentId },
+        });
+
+        if (!equipment) {
+          throw new BadRequestException(`Equipamento ID ${equipmentId} não encontrado`);
+        }
+
+        if (
+          equipment.origem === 'interno' &&
+          quantidade > equipment.quantidadeDisponivel
+        ) {
+          throw new BadRequestException(
+            `Estoque insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}, Solicitado: ${quantidade}`,
+          );
+        }
+      }
+
+      checklist.status = 'liberado';
+      const saved = await manager.save(Checklist, checklist);
+
+      await this.auditLogService.log(
+        userId ?? null,
+        userEmail ?? null,
+        'LIBERAR',
+        'checklist',
+        id,
+        { status: 'rascunho -> liberado' },
+        `Checklist "${checklist.nome}" liberado para separação`,
+      );
+
+      return saved;
+    });
+  }
+
+  async vincularEvento(checklistId: number, eventId: number, userId?: number, userEmail?: string) {
     const checklist = await this.checklistRepository.findOne({
-      where: { id },
-      relations: ['items'],
+      where: { id: checklistId },
     });
 
     if (!checklist) {
@@ -66,49 +177,31 @@ export class ChecklistService {
     }
 
     if (checklist.status !== 'rascunho') {
-      throw new BadRequestException('Checklist não pode ser liberado');
+      throw new BadRequestException('Só é possível vincular evento em checklist rascunho');
     }
 
-    if (!checklist.items || checklist.items.length === 0) {
-      throw new BadRequestException(
-        'Checklist precisa ter ao menos um item para ser liberado',
-      );
+    const event = await this.eventRepository.findOne({ where: { id: eventId } });
+    if (!event) {
+      throw new BadRequestException('Evento não encontrado');
     }
 
-    // Agrupa quantidade por equipamento para validação
-    const mapa = new Map<number, number>();
+    checklist.eventId = eventId;
+    const saved = await this.checklistRepository.save(checklist);
 
-    for (const item of checklist.items) {
-      const atual = mapa.get(item.equipmentId) ?? 0;
-      mapa.set(item.equipmentId, atual + item.quantidadePlanejada);
-    }
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'UPDATE',
+      'checklist',
+      checklistId,
+      { eventId },
+      `Checklist vinculado ao evento "${event.nome}"`,
+    );
 
-    // Valida se há estoque suficiente (apenas validação, sem baixa)
-    for (const [equipmentId, quantidade] of mapa.entries()) {
-      const equipment = await this.equipmentRepository.findOne({
-        where: { id: equipmentId },
-      });
-
-      if (!equipment) {
-        throw new BadRequestException('Equipamento não encontrado');
-      }
-
-      if (
-        equipment.origem === 'interno' &&
-        quantidade > equipment.quantidadeDisponivel
-      ) {
-        throw new BadRequestException(
-          `Estoque insuficiente para ${equipment.nome}. Disponível: ${equipment.quantidadeDisponivel}`,
-        );
-      }
-    }
-
-    // Apenas muda o status — estoque é deduzido na separação
-    checklist.status = 'liberado';
-    return this.checklistRepository.save(checklist);
+    return saved;
   }
 
-  async clonar(checklistId: number) {
+  async clonar(checklistId: number, userId?: number, userEmail?: string) {
     const checklistOriginal = await this.checklistRepository.findOne({
       where: { id: checklistId },
       relations: ['items'],
@@ -160,59 +253,83 @@ export class ChecklistService {
       await this.checklistItemRepository.save(novoItem);
     }
 
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'CLONAR',
+      'checklist',
+      checklistSalvo.id,
+      { originalId: checklistId },
+      `Checklist clonado de "${checklistOriginal.nome}"`,
+    );
+
     return {
       checklist: checklistSalvo,
       alertas,
     };
   }
 
-  async cancelar(id: number, motivo: string, usuario: string) {
-    const checklist = await this.checklistRepository.findOne({
-      where: { id },
-      relations: ['items'],
-    });
+  async cancelar(id: number, motivo: string, usuario: string, userId?: number) {
+    return this.dataSource.transaction(async (manager) => {
+      const checklist = await manager.findOne(Checklist, {
+        where: { id },
+        relations: ['items'],
+      });
 
-    if (!checklist) {
-      throw new BadRequestException('Checklist não encontrado');
-    }
+      if (!checklist) {
+        throw new BadRequestException('Checklist não encontrado');
+      }
 
-    if (checklist.status === 'em_evento') {
-      throw new BadRequestException(
-        'Não é possível cancelar checklist em evento',
-      );
-    }
+      if (checklist.status === 'em_evento') {
+        throw new BadRequestException(
+          'Não é possível cancelar checklist em evento',
+        );
+      }
 
-    if (
-      checklist.status !== 'liberado' &&
-      checklist.status !== 'rascunho'
-    ) {
-      throw new BadRequestException(
-        'Só é possível cancelar checklists em rascunho ou liberados',
-      );
-    }
+      if (
+        checklist.status !== 'liberado' &&
+        checklist.status !== 'rascunho'
+      ) {
+        throw new BadRequestException(
+          'Só é possível cancelar checklists em rascunho ou liberados',
+        );
+      }
 
-    // Devolve estoque se já houve separação
-    if (checklist.status === 'liberado' && checklist.items) {
-      for (const item of checklist.items) {
-        if (item.quantidadeSeparada > 0) {
-          const equipment = await this.equipmentRepository.findOne({
-            where: { id: item.equipmentId },
-          });
+      // Return stock if separation has occurred
+      if (checklist.status === 'liberado' && checklist.items) {
+        for (const item of checklist.items) {
+          if (item.quantidadeSeparada > 0) {
+            const equipment = await manager.findOne(Equipment, {
+              where: { id: item.equipmentId },
+            });
 
-          if (equipment && equipment.origem === 'interno') {
-            equipment.quantidadeDisponivel += item.quantidadeSeparada;
-            await this.equipmentRepository.save(equipment);
+            if (equipment && equipment.origem === 'interno') {
+              equipment.quantidadeDisponivel += item.quantidadeSeparada;
+              await manager.save(Equipment, equipment);
+            }
           }
         }
       }
-    }
 
-    checklist.status = 'cancelado';
-    checklist.motivoCancelamento = motivo;
-    checklist.canceladoPor = usuario;
-    checklist.canceladoEm = new Date();
+      checklist.status = 'cancelado';
+      checklist.motivoCancelamento = motivo;
+      checklist.canceladoPor = usuario;
+      checklist.canceladoEm = new Date();
 
-    return this.checklistRepository.save(checklist);
+      const saved = await manager.save(Checklist, checklist);
+
+      await this.auditLogService.log(
+        userId ?? null,
+        usuario,
+        'CANCELAR',
+        'checklist',
+        id,
+        { motivo, status: 'cancelado' },
+        `Checklist "${checklist.nome}" cancelado: ${motivo}`,
+      );
+
+      return saved;
+    });
   }
 
   async obterAlertas(checklistId: number) {

@@ -5,6 +5,7 @@ import {
   Min,
   IsBoolean,
   MinLength,
+  IsIn,
 } from 'class-validator';
 
 export class UpdateEquipmentDto {
@@ -26,4 +27,12 @@ export class UpdateEquipmentDto {
   @IsOptional()
   @IsBoolean()
   ativo?: boolean;
+
+  @IsOptional()
+  @IsIn(['interno', 'alugado'])
+  origem?: 'interno' | 'alugado';
+
+  @IsOptional()
+  @IsString()
+  fornecedor?: string;
 }

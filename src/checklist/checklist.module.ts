@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Checklist } from './checklist.entity';
 import { ChecklistItem } from '../checklist-item/checklist-item.entity';
 import { Equipment } from '../equipment/equipment.entity';
+import { Event } from '../event/event.entity';
 import { ChecklistService } from './checklist.service';
 import { ChecklistController } from './checklist.controller';
 import { AuthModule } from '../auth/auth.module';
@@ -11,12 +12,13 @@ import { AuthModule } from '../auth/auth.module';
   imports: [
     TypeOrmModule.forFeature([
       Checklist,
-      ChecklistItem, // ✅ NECESSÁRIO
-      Equipment, // ✅ NECESSÁRIO
+      ChecklistItem,
+      Equipment,
+      Event,
     ]),
     AuthModule,
   ],
   providers: [ChecklistService],
   controllers: [ChecklistController],
 })
-export class ChecklistModule {}
+export class ChecklistModule { }

@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  VersionColumn,
 } from 'typeorm';
 
 export type EquipmentOrigem = 'interno' | 'alugado';
@@ -35,4 +36,7 @@ export class Equipment {
 
   @Column({ nullable: true })
   fornecedor?: string;
+
+  @VersionColumn()
+  version: number;
 }

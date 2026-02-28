@@ -14,6 +14,8 @@ import { EquipmentModule } from './equipment/equipment.module';
 import { ChecklistTeamModule } from './checklist-team/checklist-team.module';
 import { EventModule } from './event/event.module';
 import { EquipmentOccurrenceModule } from './equipment-occurrence/equipment-occurrence.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -27,6 +29,7 @@ import { EquipmentOccurrenceModule } from './equipment-occurrence/equipment-occu
       autoLoadEntities: true,
       synchronize: true,
     }),
+
     AuthModule,
     UserModule,
     ChecklistModule,
@@ -36,6 +39,8 @@ import { EquipmentOccurrenceModule } from './equipment-occurrence/equipment-occu
     ChecklistTeamModule,
     EventModule,
     EquipmentOccurrenceModule,
+    AuditLogModule,
+    DashboardModule,
   ],
   providers: [
     {

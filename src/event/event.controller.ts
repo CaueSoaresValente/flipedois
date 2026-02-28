@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Req,
 } from '@nestjs/common';
 import { CreateEventDto } from './dto/create-event.dto';
 import { EventService } from './event.service';
@@ -16,12 +17,12 @@ import { Roles } from '../auth/roles.decorator';
 
 @Controller('event')
 export class EventController {
-  constructor(private readonly service: EventService) {}
+  constructor(private readonly service: EventService) { }
 
   @Roles('ADMIN')
   @Post()
-  create(@Body() dto: CreateEventDto) {
-    return this.service.create(dto);
+  create(@Body() dto: CreateEventDto, @Req() req: any) {
+    return this.service.create(dto, req.user.sub, req.user.email);
   }
 
   @Get()
