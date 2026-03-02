@@ -8,6 +8,7 @@ import { ChecklistItemHistoryService } from '../checklist-item-history/checklist
 import { CreateChecklistItemDto } from './dto/create-checklist-item.dto';
 import { Event } from '../event/event.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EquipmentOccurrence } from '../equipment-occurrence/equipment-occurrence.entity';
 
 @Injectable()
 export class ChecklistItemService {
@@ -20,6 +21,9 @@ export class ChecklistItemService {
 
     @InjectRepository(Checklist)
     private readonly checklistRepository: Repository<Checklist>,
+
+    @InjectRepository(EquipmentOccurrence)
+    private readonly occurrenceRepository: Repository<EquipmentOccurrence>,
 
     private readonly historyService: ChecklistItemHistoryService,
 
@@ -124,53 +128,71 @@ export class ChecklistItemService {
   // SEPARAÇÃO (FUNCIONÁRIO) — with transaction
   // ==============================
   async separarItem(itemId: number, quantidade: number, userId?: number, userEmail?: string) {
+    console.log(`[SEPARAR] Início: itemId=${itemId}, quantidade=${quantidade}, userId=${userId}, userEmail=${userEmail}`);
+
     return this.dataSource.transaction(async (manager) => {
       const item = await manager.findOne(ChecklistItem, {
         where: { id: itemId },
         relations: ['checklist'],
       });
 
-      if (!item) throw new BadRequestException('Item não encontrado');
+      if (!item) {
+        console.log('[SEPARAR] FALHA: Item não encontrado');
+        throw new BadRequestException('Item não encontrado');
+      }
+
+      console.log(`[SEPARAR] Item: equipamento="${item.nomeSnapshot}", checklistStatus="${item.checklist.status}", planejada=${item.quantidadePlanejada}, separada=${item.quantidadeSeparada}`);
 
       if (item.checklist.status === 'cancelado') {
+        console.log('[SEPARAR] FALHA: Checklist cancelado');
         throw new BadRequestException('Checklist cancelado');
       }
 
       if (item.checklist.status !== 'liberado') {
-        throw new BadRequestException('Checklist não liberado para separação');
+        console.log(`[SEPARAR] FALHA: Checklist não liberado (status="${item.checklist.status}")`);
+        throw new BadRequestException(`Checklist não está liberado para separação (status atual: ${item.checklist.status})`);
       }
 
       if (quantidade <= 0) {
+        console.log('[SEPARAR] FALHA: Quantidade inválida');
         throw new BadRequestException('Quantidade inválida');
       }
 
       if (item.quantidadeSeparada + quantidade > item.quantidadePlanejada) {
+        const max = item.quantidadePlanejada - item.quantidadeSeparada;
+        console.log(`[SEPARAR] FALHA: Excede planejada. Max restante=${max}`);
         throw new BadRequestException(
-          `Excede quantidade planejada. Máximo: ${item.quantidadePlanejada - item.quantidadeSeparada}`,
+          `Excede quantidade planejada. Máximo restante: ${max}`,
         );
       }
 
       const equipment = await manager.findOne(Equipment, {
         where: { id: item.equipmentId },
+        lock: { mode: 'pessimistic_write' },
       });
 
       if (!equipment) {
+        console.log('[SEPARAR] FALHA: Equipamento não encontrado');
         throw new BadRequestException('Equipamento não encontrado');
       }
+
+      console.log(`[SEPARAR] Equipamento: nome="${equipment.nome}", origem="${equipment.origem}", disponivel=${equipment.quantidadeDisponivel}, total=${equipment.quantidadeTotal}`);
 
       // Block if no stock available
       if (
         equipment.origem === 'interno' &&
         quantidade > equipment.quantidadeDisponivel
       ) {
+        console.log(`[SEPARAR] FALHA: Estoque insuficiente. Solicitado=${quantidade}, Disponível=${equipment.quantidadeDisponivel}`);
         throw new BadRequestException(
-          `Estoque insuficiente. Disponível: ${equipment.quantidadeDisponivel}`,
+          `Estoque insuficiente. Solicitado: ${quantidade}, Disponível: ${equipment.quantidadeDisponivel}`,
         );
       }
 
+
       const anterior = item.quantidadeSeparada;
 
-      // Deduct stock within transaction
+      // Deduct stock within transaction — PESSIMISTIC LOCK prevents race conditions
       if (equipment.origem === 'interno') {
         equipment.quantidadeDisponivel -= quantidade;
         if (equipment.quantidadeDisponivel < 0) {
@@ -243,7 +265,7 @@ export class ChecklistItemService {
   }
 
   // ==============================
-  // DEVOLUÇÃO (FUNCIONÁRIO) — with transaction
+  // DEVOLUÇÃO (FUNCIONÁRIO) — with transaction, per-condition tracking + auto-occurrence
   // ==============================
   async devolverItem(
     itemId: number,
@@ -267,13 +289,24 @@ export class ChecklistItemService {
         );
       }
 
+      // Pessimistic lock to prevent concurrent return of same item
       const equipment = await manager.findOne(Equipment, {
         where: { id: item.equipmentId },
+        lock: { mode: 'pessimistic_write' },
       });
 
       if (!equipment) throw new BadRequestException('Equipamento não encontrado');
 
       const anterior = item.quantidadeDevolvida;
+
+      // Track per-condition quantities
+      if (situacao === 'ok') {
+        item.quantidadeOk = (item.quantidadeOk || 0) + quantidade;
+      } else if (situacao === 'quebrado') {
+        item.quantidadeQuebrada = (item.quantidadeQuebrada || 0) + quantidade;
+      } else if (situacao === 'perdido') {
+        item.quantidadePerdida = (item.quantidadePerdida || 0) + quantidade;
+      }
 
       item.quantidadeDevolvida += quantidade;
 
@@ -283,11 +316,31 @@ export class ChecklistItemService {
         await manager.save(Equipment, equipment);
       }
 
-      // Set final status
+      // Auto-create occurrence for damaged/lost items
+      if (situacao !== 'ok') {
+        const tipoOcorrencia = situacao === 'quebrado' ? 'DANO' : 'PERDA';
+        // Find event linked to this checklist
+        const checklist = await manager.findOne(Checklist, {
+          where: { id: item.checklistId },
+          relations: ['event'],
+        });
+        const occurrence = this.occurrenceRepository.create({
+          equipment,
+          quantidade,
+          descricao: `Devolução: ${item.nomeSnapshot} registrado como ${situacao === 'quebrado' ? 'quebrado' : 'perdido'}`,
+          tipo: tipoOcorrencia,
+          status: 'PENDENTE',
+          motivo: `Auto-gerado via devolução do checklist #${item.checklistId}`,
+          ...(checklist?.event ? { event: checklist.event } : {}),
+        });
+        await manager.save(EquipmentOccurrence, occurrence);
+      }
+
+      // Set final return status
       if (item.quantidadeDevolvida === item.quantidadeSeparada) {
-        if (situacao === 'ok') item.statusDevolucao = 'devolvido';
-        if (situacao === 'quebrado') item.statusDevolucao = 'quebrado';
-        if (situacao === 'perdido') item.statusDevolucao = 'perdido';
+        if (item.quantidadePerdida > 0) item.statusDevolucao = 'perdido';
+        else if (item.quantidadeQuebrada > 0) item.statusDevolucao = 'quebrado';
+        else item.statusDevolucao = 'devolvido';
       } else {
         item.statusDevolucao = 'faltando';
       }
@@ -315,6 +368,9 @@ export class ChecklistItemService {
           situacao,
           quantidadeAnterior: anterior,
           quantidadeNova: item.quantidadeDevolvida,
+          quantidadeOk: item.quantidadeOk,
+          quantidadeQuebrada: item.quantidadeQuebrada,
+          quantidadePerdida: item.quantidadePerdida,
         },
         `Devolvido ${quantidade}x "${item.nomeSnapshot}" (${situacao})`,
       );
@@ -324,8 +380,8 @@ export class ChecklistItemService {
           situacao === 'ok'
             ? 'Item devolvido ao estoque'
             : situacao === 'quebrado'
-              ? 'Item registrado como quebrado'
-              : 'Item registrado como perdido',
+              ? 'Item registrado como quebrado (ocorrência criada)'
+              : 'Item registrado como perdido (ocorrência criada)',
         item,
       };
     });

@@ -1,11 +1,10 @@
-import { IsNotEmpty, IsString, IsOptional, IsInt } from 'class-validator';
+import { IsNotEmpty, IsString, IsInt } from 'class-validator';
 
 export class CreateChecklistDto {
   @IsString()
   @IsNotEmpty()
   nome: string;
 
-  @IsOptional()
   @IsInt()
-  eventId?: number;
+  eventId: number;
 }

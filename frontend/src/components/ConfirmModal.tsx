@@ -8,7 +8,7 @@ interface ConfirmModalProps {
     message: string;
     confirmLabel?: string;
     cancelLabel?: string;
-    type?: 'danger' | 'warning' | 'info';
+    type?: 'danger' | 'warning' | 'info' | 'success';
     showInput?: boolean;
     inputLabel?: string;
     inputPlaceholder?: string;
@@ -37,6 +37,7 @@ export default function ConfirmModal({
         danger: 'bg-red-500 hover:bg-red-600',
         warning: 'bg-amber-500 hover:bg-amber-600',
         info: 'bg-indigo-500 hover:bg-indigo-600',
+        success: 'bg-emerald-500 hover:bg-emerald-600',
     };
 
     const handleConfirm = () => {

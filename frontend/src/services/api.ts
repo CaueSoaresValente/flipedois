@@ -5,7 +5,7 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = sessionStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -16,7 +16,7 @@ api.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
       if (window.location.pathname !== '/') {
         window.location.href = '/';
       }
@@ -48,8 +48,8 @@ export const equipmentApi = {
 export const checklistApi = {
   getAll: () => api.get('/checklist'),
   getOne: (id: number) => api.get(`/checklist/${id}`),
-  create: (nome: string, eventId?: number) =>
-    api.post('/checklist', { nome, ...(eventId ? { eventId } : {}) }),
+  create: (nome: string, eventId: number) =>
+    api.post('/checklist', { nome, eventId }),
   liberar: (id: number) => api.patch(`/checklist/${id}/liberar`),
   cancelar: (id: number, motivo: string) =>
     api.patch(`/checklist/${id}/cancelar`, { motivo }),
@@ -100,6 +100,8 @@ export const eventApi = {
   getAll: () => api.get('/event'),
   getOne: (id: number) => api.get(`/event/${id}`),
   create: (data: any) => api.post('/event', data),
+  update: (id: number, data: any) => api.patch(`/event/${id}`, data),
+  finalizar: (id: number) => api.patch(`/event/${id}/finalizar`),
   addTeamMember: (eventId: number, data: { nome: string; funcao: string }) =>
     api.post(`/event/${eventId}/equipe`, data),
   getTeam: (eventId: number) => api.get(`/event/${eventId}/equipe`),

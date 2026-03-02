@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('token');
+    const savedToken = sessionStorage.getItem('token');
     if (savedToken) {
       const payload = parseJwt(savedToken);
       if (payload && payload.exp * 1000 > Date.now()) {
@@ -60,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: payload.role,
         });
       } else {
-        localStorage.removeItem('token');
+        sessionStorage.removeItem('token');
       }
     }
     setLoading(false);
@@ -70,13 +70,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await api.post('/auth/login', { email, senha });
     const { access_token, user: userData } = res.data;
 
-    localStorage.setItem('token', access_token);
+    sessionStorage.setItem('token', access_token);
     setToken(access_token);
     setUser(userData);
   }
 
   function logout() {
-    localStorage.removeItem('token');
+    sessionStorage.removeItem('token');
     setToken(null);
     setUser(null);
   }

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Users, Plus } from 'lucide-react';
+import { Users, Plus, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { userApi } from '../services/api';
 import Modal from '../components/Modal';
+import { useToast } from '../contexts/ToastContext';
 
 interface UserItem {
   id: number;
@@ -15,6 +16,7 @@ export default function Usuarios() {
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const { addToast } = useToast();
 
   // Form
   const [nome, setNome] = useState('');
@@ -46,9 +48,10 @@ export default function Usuarios() {
       setEmail('');
       setSenha('');
       setRole('FUNCIONARIO');
+      addToast('success', `Usuário ${nome} criado com sucesso`);
       load();
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Erro ao criar usuário');
+      addToast('error', err.response?.data?.message || 'Erro ao criar usuário');
     }
   }
 
@@ -123,27 +126,42 @@ export default function Usuarios() {
                   {u.email}
                 </td>
                 <td className="px-6 py-3 text-center">
-                  <span
-                    className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                      u.role === 'ADMIN'
-                        ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
-                        : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                    }`}
-                  >
-                    {u.role === 'ADMIN' ? 'Admin' : 'Funcionário'}
-                  </span>
+                  <div className="flex items-center justify-center gap-1.5">
+                    {u.role === 'ADMIN' ? (
+                      <ShieldCheck size={14} className="text-purple-500" />
+                    ) : (
+                      <ShieldAlert size={14} className="text-blue-400" />
+                    )}
+                    <span
+                      className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                        u.role === 'ADMIN'
+                          ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
+                          : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                      }`}
+                    >
+                      {u.role === 'ADMIN' ? 'Admin' : 'Funcionário'}
+                    </span>
+                  </div>
                 </td>
                 <td className="px-6 py-3 text-center">
                   <span
-                    className={`inline-flex w-2 h-2 rounded-full ${
-                      u.ativo ? 'bg-green-500' : 'bg-red-500'
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                      u.ativo ? 'text-emerald-600' : 'text-red-500'
                     }`}
-                  />
+                  >
+                    <span className={`w-2 h-2 rounded-full ${u.ativo ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    {u.ativo ? 'Ativo' : 'Inativo'}
+                  </span>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {users.length === 0 && (
+          <div className="p-6 text-center text-slate-400 text-sm">
+            Nenhum usuário cadastrado
+          </div>
+        )}
       </div>
 
       {/* Create Modal */}
@@ -155,13 +173,14 @@ export default function Usuarios() {
         <form onSubmit={handleCreate} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Nome
+              Nome completo
             </label>
             <input
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               value={nome}
               onChange={(e) => setNome(e.target.value)}
               required
+              placeholder="Ex: João da Silva"
             />
           </div>
           <div>
@@ -170,41 +189,68 @@ export default function Usuarios() {
             </label>
             <input
               type="email"
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              placeholder="joao@empresa.com"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Senha
+              Senha temporária
             </label>
             <input
               type="password"
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               value={senha}
               onChange={(e) => setSenha(e.target.value)}
               required
               minLength={4}
+              placeholder="Mínimo 4 caracteres"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Papel
+              Tipo de acesso
             </label>
-            <select
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-            >
-              <option value="FUNCIONARIO">Funcionário</option>
-              <option value="ADMIN">Admin</option>
-            </select>
+            <div className="flex gap-2">
+              {[
+                {
+                  value: 'FUNCIONARIO',
+                  label: 'Funcionário',
+                  desc: 'Separação e devolução',
+                  icon: ShieldAlert,
+                },
+                {
+                  value: 'ADMIN',
+                  label: 'Admin',
+                  desc: 'Acesso completo',
+                  icon: ShieldCheck,
+                },
+              ].map(({ value, label, desc, icon: Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setRole(value)}
+                  className={`flex-1 flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all ${
+                    role === value
+                      ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                      : 'border-slate-200 dark:border-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  <Icon size={18} className={role === value ? 'text-indigo-500' : 'text-slate-400'} />
+                  <span className={`text-xs font-semibold ${role === value ? 'text-indigo-600' : 'text-slate-600 dark:text-slate-300'}`}>
+                    {label}
+                  </span>
+                  <span className="text-xs text-slate-400">{desc}</span>
+                </button>
+              ))}
+            </div>
           </div>
           <button
             type="submit"
-            className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
+            className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
           >
             Criar Usuário
           </button>

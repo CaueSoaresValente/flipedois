@@ -61,4 +61,20 @@ export class EventController {
   removerEquipe(@Param('id', ParseIntPipe) id: number) {
     return this.service.removerEquipe(id);
   }
+
+  @Roles('ADMIN')
+  @Patch(':id')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: Partial<CreateEventDto>,
+    @Req() req: any,
+  ) {
+    return this.service.update(id, dto, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id/finalizar')
+  finalizar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.finalizar(id, req.user.sub, req.user.email);
+  }
 }

@@ -8,7 +8,8 @@ import { ChecklistItemController } from './checklist-item.controller';
 import { Equipment } from '../equipment/equipment.entity';
 import { Checklist } from '../checklist/checklist.entity';
 import { ChecklistItemHistoryModule } from '../checklist-item-history/checklist-item-history.module';
-import { Event } from '../event/event.entity'; // ⭐ IMPORTANTE
+import { Event } from '../event/event.entity';
+import { EquipmentOccurrence } from '../equipment-occurrence/equipment-occurrence.entity';
 
 @Module({
   imports: [
@@ -16,7 +17,8 @@ import { Event } from '../event/event.entity'; // ⭐ IMPORTANTE
       ChecklistItem,
       Equipment,
       Checklist,
-      Event, // ⭐ ESSENCIAL
+      Event,
+      EquipmentOccurrence,
     ]),
     ChecklistItemHistoryModule,
   ],

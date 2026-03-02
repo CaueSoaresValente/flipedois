@@ -16,9 +16,11 @@ export type AuditAction =
     | 'CANCELAR_SEPARACAO'
     | 'CLONAR'
     | 'DESATIVAR'
+    | 'FINALIZAR'
     | 'OCORRENCIA_REGISTRAR'
     | 'OCORRENCIA_CONFIRMAR'
-    | 'OCORRENCIA_CANCELAR';
+    | 'OCORRENCIA_CANCELAR'
+    | 'OCORRENCIA_AUTO';
 
 @Entity('audit_log')
 export class AuditLog {

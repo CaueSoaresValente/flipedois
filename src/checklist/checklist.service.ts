@@ -26,23 +26,28 @@ export class ChecklistService {
     private readonly auditLogService: AuditLogService,
   ) { }
 
-  async create(nome: string, eventId?: number, userId?: number, userEmail?: string) {
+  async create(nome: string, eventId: number, userId?: number, userEmail?: string) {
     if (!nome || nome.trim().length === 0) {
       throw new BadRequestException('Nome do checklist é obrigatório');
     }
 
-    // Validate event if provided
-    if (eventId) {
-      const event = await this.eventRepository.findOne({ where: { id: eventId } });
-      if (!event) {
-        throw new BadRequestException('Evento não encontrado');
-      }
+    if (!eventId) {
+      throw new BadRequestException('Checklist precisa estar vinculado a um evento');
+    }
+
+    const event = await this.eventRepository.findOne({ where: { id: eventId } });
+    if (!event) {
+      throw new BadRequestException('Evento não encontrado');
+    }
+
+    if (event.status === 'finalizado') {
+      throw new BadRequestException('Não é possível criar checklist para evento finalizado');
     }
 
     const checklist = this.checklistRepository.create({
       nome,
       status: 'rascunho',
-      eventId: eventId ?? undefined,
+      eventId,
     });
 
     const saved = await this.checklistRepository.save(checklist);
@@ -54,7 +59,7 @@ export class ChecklistService {
       'checklist',
       saved.id,
       { nome, eventId },
-      `Checklist "${nome}" criado`,
+      `Checklist "${nome}" criado para evento "${event.nome}"`,
     );
 
     return saved;

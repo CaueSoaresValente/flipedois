@@ -4,6 +4,7 @@ import {
   Column,
   OneToMany,
   CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { Checklist } from '../checklist/checklist.entity';
 import { EventTeam } from './event-team.entity';
@@ -45,6 +46,18 @@ export class Event {
   })
   equipe: EventTeam[];
 
+  @Column({ type: 'varchar', default: 'ativo' })
+  status: 'ativo' | 'finalizado';
+
+  @Column({ nullable: true })
+  finalizadoPor?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  finalizadoEm?: Date;
+
   @CreateDateColumn()
   createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
 }

@@ -16,19 +16,23 @@ export class EquipmentService {
   ) { }
 
   async create(dto: CreateEquipmentDto, userId?: number, userEmail?: string) {
-    if (dto.quantidadeTotal <= 0 && dto.origem === 'interno') {
-      throw new BadRequestException('Quantidade inválida');
+    const origem = dto.origem ?? 'interno';
+
+    if (dto.quantidadeTotal < 0) {
+      throw new BadRequestException('Quantidade não pode ser negativa');
     }
 
-    const origem = dto.origem ?? 'interno';
+    if (dto.quantidadeTotal <= 0 && origem === 'interno') {
+      throw new BadRequestException('Quantidade inválida para equipamento interno');
+    }
 
     const equipment = this.repository.create({
       nome: dto.nome,
       descricao: dto.descricao,
-      quantidadeTotal: origem === 'interno' ? dto.quantidadeTotal : 0,
-      quantidadeDisponivel: origem === 'interno' ? dto.quantidadeTotal : 0,
+      quantidadeTotal: dto.quantidadeTotal,
+      quantidadeDisponivel: dto.quantidadeTotal,
       origem,
-      fornecedor: dto.fornecedor,
+      fornecedor: dto.fornecedor ?? undefined,
       ativo: true,
     });
 
