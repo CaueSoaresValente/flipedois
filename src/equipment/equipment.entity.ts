@@ -22,8 +22,27 @@ export class Equipment {
   @Column()
   quantidadeTotal: number;
 
-  @Column()
+  @Column({ default: 0 })
   quantidadeDisponivel: number;
+
+  /**
+   * Quantidade atualmente em uso (reservada para eventos liberados).
+   * Fórmula: total = disponivel + emUso + danificado + perdido
+   */
+  @Column({ default: 0 })
+  quantidadeEmUso: number;
+
+  /**
+   * Quantidade confirmada como danificada (ocorrência BAIXADA tipo DANO).
+   */
+  @Column({ default: 0 })
+  quantidadeDanificada: number;
+
+  /**
+   * Quantidade confirmada como perdida (ocorrência BAIXADA tipo PERDA).
+   */
+  @Column({ default: 0 })
+  quantidadePerdida: number;
 
   @Column({ default: true })
   ativo: boolean;

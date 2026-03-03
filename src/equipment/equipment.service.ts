@@ -83,8 +83,8 @@ export class EquipmentService {
 
     const changes: Record<string, any> = {};
 
-    const quantidadeEmUso =
-      equipment.quantidadeTotal - equipment.quantidadeDisponivel;
+    // emUso is tracked directly — do NOT derive as total - disponivel (ignores danificada/perdida)
+    const quantidadeEmUso = equipment.quantidadeEmUso;
 
     if (dto.quantidadeTotal !== undefined) {
       if (dto.quantidadeTotal < quantidadeEmUso) {

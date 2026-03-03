@@ -7,18 +7,15 @@ import { Event } from '../event/event.entity';
 import { ChecklistService } from './checklist.service';
 import { ChecklistController } from './checklist.controller';
 import { AuthModule } from '../auth/auth.module';
+import { StockModule } from '../stock/stock.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      Checklist,
-      ChecklistItem,
-      Equipment,
-      Event,
-    ]),
+    TypeOrmModule.forFeature([Checklist, ChecklistItem, Equipment, Event]),
     AuthModule,
+    StockModule,
   ],
   providers: [ChecklistService],
   controllers: [ChecklistController],
 })
-export class ChecklistModule { }
+export class ChecklistModule {}

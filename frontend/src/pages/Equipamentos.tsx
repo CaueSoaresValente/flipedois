@@ -12,6 +12,9 @@ interface Equipment {
   descricao: string;
   quantidadeTotal: number;
   quantidadeDisponivel: number;
+  quantidadeEmUso: number;
+  quantidadeDanificada: number;
+  quantidadePerdida: number;
   ativo: boolean;
   origem: string;
   fornecedor?: string;

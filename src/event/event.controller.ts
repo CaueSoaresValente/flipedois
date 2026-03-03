@@ -14,10 +14,17 @@ import { EventService } from './event.service';
 import { CreateEventTeamDto } from './dto/create-event-team.dto';
 import { UpdateEventTeamDto } from './dto/update-event-team.dto';
 import { Roles } from '../auth/roles.decorator';
+import { IsString, IsNotEmpty } from 'class-validator';
+
+class CancelarEventoDto {
+  @IsString()
+  @IsNotEmpty()
+  motivo: string;
+}
 
 @Controller('event')
 export class EventController {
-  constructor(private readonly service: EventService) { }
+  constructor(private readonly service: EventService) {}
 
   @Roles('ADMIN')
   @Post()
@@ -76,5 +83,15 @@ export class EventController {
   @Patch(':id/finalizar')
   finalizar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.service.finalizar(id, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id/cancelar')
+  cancelar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CancelarEventoDto,
+    @Req() req: any,
+  ) {
+    return this.service.cancelar(id, dto.motivo, req.user.sub, req.user.email);
   }
 }

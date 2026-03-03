@@ -10,6 +10,7 @@ import { Checklist } from '../checklist/checklist.entity';
 import { ChecklistItemHistoryModule } from '../checklist-item-history/checklist-item-history.module';
 import { Event } from '../event/event.entity';
 import { EquipmentOccurrence } from '../equipment-occurrence/equipment-occurrence.entity';
+import { StockModule } from '../stock/stock.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { EquipmentOccurrence } from '../equipment-occurrence/equipment-occurrenc
       EquipmentOccurrence,
     ]),
     ChecklistItemHistoryModule,
+    StockModule,
   ],
   controllers: [ChecklistItemController],
   providers: [ChecklistItemService],

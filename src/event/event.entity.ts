@@ -9,6 +9,8 @@ import {
 import { Checklist } from '../checklist/checklist.entity';
 import { EventTeam } from './event-team.entity';
 
+export type EventStatus = 'ativo' | 'finalizado' | 'cancelado';
+
 @Entity('event')
 export class Event {
   @PrimaryGeneratedColumn()
@@ -32,11 +34,10 @@ export class Event {
   @Column({ nullable: true })
   observacoes: string;
 
-  // Changed from OneToOne to OneToMany — an event can have multiple checklists
   @OneToMany(() => Checklist, (checklist) => checklist.event)
   checklists: Checklist[];
 
-  // Legacy single checklist accessor (kept for backward compatibility)
+  /** Accessor de compatibilidade — retorna o primeiro checklist */
   get checklist(): Checklist | undefined {
     return this.checklists?.[0];
   }
@@ -47,13 +48,22 @@ export class Event {
   equipe: EventTeam[];
 
   @Column({ type: 'varchar', default: 'ativo' })
-  status: 'ativo' | 'finalizado';
+  status: EventStatus;
 
   @Column({ nullable: true })
   finalizadoPor?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   finalizadoEm?: Date;
+
+  @Column({ nullable: true })
+  motivoCancelamento?: string;
+
+  @Column({ nullable: true })
+  canceladoPor?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  canceladoEm?: Date;
 
   @CreateDateColumn()
   createdAt: Date;
