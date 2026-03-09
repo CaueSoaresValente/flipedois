@@ -4,11 +4,11 @@ import { Roles } from '../auth/roles.decorator';
 
 @Controller('dashboard')
 export class DashboardController {
-    constructor(private readonly service: DashboardService) { }
+  constructor(private readonly service: DashboardService) {}
 
-    @Roles('ADMIN')
-    @Get('stats')
-    getStats() {
-        return this.service.getStats();
-    }
+  @Roles('ADMIN')
+  @Get('stats')
+  getStats() {
+    return this.service.getStats();
+  }
 }

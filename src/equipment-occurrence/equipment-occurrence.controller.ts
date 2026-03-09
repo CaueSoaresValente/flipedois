@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { EquipmentOccurrenceService } from './equipment-occurrence.service';
 import { CreateOccurrenceDto } from './dto/create-occurrence.dto';
+import { UpdateOccurrenceDto } from './dto/update-occurrence.dto';
 import { Roles } from '../auth/roles.decorator';
 
 @Controller('equipment-occurrence')
@@ -24,6 +25,7 @@ export class EquipmentOccurrenceController {
       dto.descricao,
       dto.tipo ?? 'DANO',
       dto.motivo,
+      true, // manual occurrence — adjust stock immediately for DANO/PERDA
     );
   }
 
@@ -39,8 +41,30 @@ export class EquipmentOccurrenceController {
     return this.service.cancelar(id);
   }
 
+  @Roles('ADMIN')
+  @Patch(':id/resolver')
+  resolver(@Param('id', ParseIntPipe) id: number) {
+    return this.service.resolver(id);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id/achar')
+  achar(@Param('id', ParseIntPipe) id: number) {
+    return this.service.achar(id);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id')
+  editar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateOccurrenceDto,
+  ) {
+    return this.service.editar(id, dto.quantidade, dto.descricao);
+  }
+
   @Get()
   findAll() {
     return this.service.findAll();
   }
 }
+

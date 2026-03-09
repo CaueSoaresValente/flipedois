@@ -47,6 +47,16 @@ const statusConfig: Record<
     bg: 'bg-red-100 dark:bg-red-900/40',
     text: 'text-red-700 dark:text-red-300',
   },
+  RESOLVIDO: {
+    label: 'Resolvido',
+    bg: 'bg-emerald-100 dark:bg-emerald-900/40',
+    text: 'text-emerald-700 dark:text-emerald-300',
+  },
+  ACHADO: {
+    label: 'Achado',
+    bg: 'bg-emerald-100 dark:bg-emerald-900/40',
+    text: 'text-emerald-700 dark:text-emerald-300',
+  },
   pendente: {
     label: 'Pendente',
     bg: 'bg-amber-100 dark:bg-amber-900/40',

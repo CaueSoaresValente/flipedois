@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Checklist } from '../checklist/checklist.entity';
 import { ChecklistItem } from '../checklist-item/checklist-item.entity';
 import { DataSource, Repository } from 'typeorm';
+import { Equipment } from '../equipment/equipment.entity';
 import { CreateEventDto } from './dto/create-event.dto';
 import { CreateEventTeamDto } from './dto/create-event-team.dto';
 import { UpdateEventTeamDto } from './dto/update-event-team.dto';
@@ -70,11 +71,25 @@ export class EventService {
     return saved;
   }
 
-  findAll() {
-    return this.repo.find({
-      relations: ['checklists', 'equipe'],
-      order: { dataInicio: 'DESC' },
-    });
+  findAll(userRole?: string) {
+    const query = this.repo
+      .createQueryBuilder('event')
+      .leftJoinAndSelect('event.checklists', 'checklists')
+      .leftJoinAndSelect('event.equipe', 'equipe')
+      .orderBy('event.dataInicio', 'DESC');
+
+    // FUNCIONÁRIO: só vê eventos "liberados" para a equipe (ao menos 1 checklist liberado ou além)
+    if (userRole === 'FUNCIONARIO') {
+      query.andWhere(
+        `event.id IN (
+          SELECT c."eventId"
+          FROM checklist c
+          WHERE c.status IN ('liberado', 'em_evento', 'pendente_devolucao', 'concluido')
+        )`,
+      );
+    }
+
+    return query.getMany();
   }
 
   async findOne(id: number) {
@@ -96,7 +111,11 @@ export class EventService {
 
     if (!event) throw new BadRequestException('Evento não encontrado.');
 
-    const membro = this.teamRepo.create({ nome: dto.nome, funcao: dto.funcao, event });
+    const membro = this.teamRepo.create({
+      nome: dto.nome,
+      funcao: dto.funcao,
+      event,
+    });
     return this.teamRepo.save(membro);
   }
 
@@ -134,15 +153,21 @@ export class EventService {
     });
 
     if (!event) throw new BadRequestException('Evento não encontrado.');
-    if (event.status === 'finalizado') throw new BadRequestException('Evento já está finalizado.');
-    if (event.status === 'cancelado') throw new BadRequestException('Evento cancelado não pode ser finalizado.');
+    if (event.status === 'finalizado')
+      throw new BadRequestException('Evento já está finalizado.');
+    if (event.status === 'cancelado')
+      throw new BadRequestException(
+        'Evento cancelado não pode ser finalizado.',
+      );
 
     const checklistsAtivos = (event.checklists ?? []).filter(
       (cl) => !['concluido', 'cancelado'].includes(cl.status),
     );
 
     if (checklistsAtivos.length > 0) {
-      const nomes = checklistsAtivos.map((cl) => `"${cl.nome}" (${cl.status})`).join(', ');
+      const nomes = checklistsAtivos
+        .map((cl) => `"${cl.nome}" (${cl.status})`)
+        .join(', ');
       throw new BadRequestException(
         `Não é possível finalizar. Checklists ainda pendentes: ${nomes}`,
       );
@@ -175,7 +200,12 @@ export class EventService {
    *   - Define checklist como cancelado
    * Define evento como cancelado.
    */
-  async cancelar(id: number, motivo: string, userId?: number, userEmail?: string) {
+  async cancelar(
+    id: number,
+    motivo: string,
+    userId?: number,
+    userEmail?: string,
+  ) {
     if (!motivo || motivo.trim().length === 0) {
       throw new BadRequestException('Motivo do cancelamento é obrigatório.');
     }
@@ -188,8 +218,12 @@ export class EventService {
 
       if (!event) throw new BadRequestException('Evento não encontrado.');
 
-      if (event.status === 'cancelado') throw new BadRequestException('Evento já está cancelado.');
-      if (event.status === 'finalizado') throw new BadRequestException('Não é possível cancelar evento finalizado.');
+      if (event.status === 'cancelado')
+        throw new BadRequestException('Evento já está cancelado.');
+      if (event.status === 'finalizado')
+        throw new BadRequestException(
+          'Não é possível cancelar evento finalizado.',
+        );
 
       // Reverte reservas de estoque para checklists ativos
       for (const checklist of event.checklists ?? []) {
@@ -202,12 +236,27 @@ export class EventService {
         for (const item of items) {
           if (checklist.status === 'liberado') {
             // Stock foi reservado na liberação — reverter tudo
-            await this.stockService.liberarReserva(manager, item.equipmentId, item.quantidadePlanejada);
-          } else if (['em_evento', 'pendente_devolucao'].includes(checklist.status)) {
-            // Reverter apenas o que ainda está em emUso (separado - devolvido ok)
-            const emUso = item.quantidadeSeparada - (item.quantidadeOk || 0);
+            await this.stockService.liberarReserva(
+              manager,
+              item.equipmentId,
+              item.quantidadePlanejada,
+            );
+          } else if (
+            ['em_evento', 'pendente_devolucao'].includes(checklist.status)
+          ) {
+            // Reverter apenas o que ainda está em emUso
+            // OK → já voltou para disponivel, Quebrado/Perdido → já saíram de emUso na devolução
+            const totalDevolvido =
+              (item.quantidadeOk || 0) +
+              (item.quantidadeQuebrada || 0) +
+              (item.quantidadePerdida || 0);
+            const emUso = item.quantidadePlanejada - totalDevolvido;
             if (emUso > 0) {
-              await this.stockService.liberarReserva(manager, item.equipmentId, emUso);
+              await this.stockService.liberarReserva(
+                manager,
+                item.equipmentId,
+                emUso,
+              );
             }
           }
         }
@@ -241,12 +290,19 @@ export class EventService {
     });
   }
 
-  async update(id: number, dto: Partial<CreateEventDto>, userId?: number, userEmail?: string) {
+  async update(
+    id: number,
+    dto: Partial<CreateEventDto>,
+    userId?: number,
+    userEmail?: string,
+  ) {
     const event = await this.repo.findOne({ where: { id } });
 
     if (!event) throw new BadRequestException('Evento não encontrado.');
-    if (event.status === 'finalizado') throw new BadRequestException('Não é possível editar evento finalizado.');
-    if (event.status === 'cancelado') throw new BadRequestException('Não é possível editar evento cancelado.');
+    if (event.status === 'finalizado')
+      throw new BadRequestException('Não é possível editar evento finalizado.');
+    if (event.status === 'cancelado')
+      throw new BadRequestException('Não é possível editar evento cancelado.');
 
     if (dto.dataInicio !== undefined || dto.dataFim !== undefined) {
       const inicio = dto.dataInicio ?? event.dataInicio.toISOString();
@@ -257,7 +313,8 @@ export class EventService {
     if (dto.nome !== undefined) event.nome = dto.nome;
     if (dto.cliente !== undefined) event.cliente = dto.cliente;
     if (dto.local !== undefined) event.local = dto.local;
-    if (dto.dataInicio !== undefined) event.dataInicio = new Date(dto.dataInicio);
+    if (dto.dataInicio !== undefined)
+      event.dataInicio = new Date(dto.dataInicio);
     if (dto.dataFim !== undefined) event.dataFim = new Date(dto.dataFim);
     if (dto.observacoes !== undefined) event.observacoes = dto.observacoes;
 
@@ -291,5 +348,119 @@ export class EventService {
         'Data de início deve ser anterior ou igual à data de fim do evento.',
       );
     }
+  }
+
+  /**
+   * CLONAR EVENTO: Clona o evento com toda a sua equipe e checklists vinculados.
+   * Checklists clonados nascem com status 'rascunho' (sem reservar estoque).
+   */
+  async clonar(id: number, userId?: number, userEmail?: string) {
+    const original = await this.repo.findOne({
+      where: { id },
+      relations: ['checklists', 'equipe'],
+    });
+
+    if (!original) throw new BadRequestException('Evento não encontrado.');
+
+    // Cria cópia do evento
+    const novoEvento = this.repo.create({
+      nome: `${original.nome} (cópia)`,
+      cliente: original.cliente,
+      local: original.local,
+      dataInicio: original.dataInicio,
+      dataFim: original.dataFim,
+      observacoes: original.observacoes,
+      status: 'ativo',
+    });
+    const eventoSalvo = await this.repo.save(novoEvento);
+
+    // Clona equipe
+    for (const m of original.equipe ?? []) {
+      await this.teamRepo.save(
+        this.teamRepo.create({
+          nome: m.nome,
+          funcao: m.funcao,
+          event: eventoSalvo,
+        }),
+      );
+    }
+
+    // Validação de estoque para itens clonados
+    const alertasEstoque: {
+      equipmentId: number;
+      nome: string;
+      disponivel: number;
+      solicitado: number;
+      checklistNome: string;
+    }[] = [];
+
+    // Clona checklists vinculados (todos nascem rascunho, sem reservar estoque)
+    for (const cl of original.checklists ?? []) {
+      const novoCl = await this.checklistRepo.save(
+        this.checklistRepo.create({
+          nome: cl.nome,
+          status: 'rascunho',
+          eventId: eventoSalvo.id,
+        }),
+      );
+
+      const items = await this.checklistItemRepo.find({
+        where: { checklistId: cl.id },
+      });
+
+      for (const item of items) {
+        // Busca equipamento atual para snapshot e validação de estoque
+        const equipmentRepo = this.checklistItemRepo.manager.getRepository(Equipment);
+        const equipment = await equipmentRepo.findOne(
+          { where: { id: item.equipmentId } },
+        );
+
+        const nomeSnapshot = equipment?.nome ?? item.nomeSnapshot;
+        const descricaoSnapshot =
+          equipment?.descricao ?? item.descricaoSnapshot;
+
+        // Verifica saldo disponível
+        if (
+          equipment &&
+          item.quantidadePlanejada > equipment.quantidadeDisponivel
+        ) {
+          alertasEstoque.push({
+            equipmentId: item.equipmentId,
+            nome: nomeSnapshot,
+            disponivel: equipment.quantidadeDisponivel,
+            solicitado: item.quantidadePlanejada,
+            checklistNome: cl.nome,
+          });
+        }
+
+        await this.checklistItemRepo.save(
+          this.checklistItemRepo.create({
+            checklistId: novoCl.id,
+            equipmentId: item.equipmentId,
+            nomeSnapshot,
+            descricaoSnapshot,
+            quantidadePlanejada: item.quantidadePlanejada,
+            setor: item.setor,
+          }),
+        );
+      }
+    }
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'CLONAR',
+      'event',
+      eventoSalvo.id,
+      { originalId: id, alertasEstoque: alertasEstoque.length },
+      `Evento clonado de "${original.nome}" como "${eventoSalvo.nome}"${alertasEstoque.length > 0 ? ` (${alertasEstoque.length} item(ns) com estoque insuficiente)` : ''}`,
+    );
+
+    const evento = await this.repo.findOne({
+      where: { id: eventoSalvo.id },
+      relations: ['checklists', 'checklists.items', 'equipe'],
+    });
+
+    return { evento, alertasEstoque };
   }
 }

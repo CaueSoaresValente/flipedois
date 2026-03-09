@@ -51,9 +51,12 @@ export const checklistApi = {
   create: (nome: string, eventId: number) =>
     api.post('/checklist', { nome, eventId }),
   liberar: (id: number) => api.patch(`/checklist/${id}/liberar`),
+  updateNome: (id: number, nome: string) => api.patch(`/checklist/${id}/nome`, { nome }),
   cancelar: (id: number, motivo: string) =>
     api.patch(`/checklist/${id}/cancelar`, { motivo }),
-  clonar: (id: number) => api.post(`/checklist/${id}/clonar`),
+  clonar: (id: number, nomeNovo?: string) =>
+    api.post(`/checklist/${id}/clonar`, { nomeNovo }),
+  reativar: (id: number) => api.patch(`/checklist/${id}/reativar`),
   getAlertas: (id: number) => api.get(`/checklist/${id}/alertas`),
   vincularEvento: (id: number, eventId: number) =>
     api.patch(`/checklist/${id}/vincular-evento`, { eventId }),
@@ -91,6 +94,8 @@ export const checklistItemApi = {
     }),
   cancelarSeparacao: (id: number, quantidade: number) =>
     api.patch(`/checklist-item/${id}/cancelar-separacao`, { quantidade }),
+  editarDevolucao: (id: number, ok: number, quebrado: number, perdido: number) =>
+    api.patch(`/checklist-item/${id}/editar-devolucao`, { ok, quebrado, perdido }),
 };
 
 // =====================
@@ -108,6 +113,9 @@ export const eventApi = {
   updateTeamMember: (id: number, data: any) =>
     api.patch(`/event/event-team/${id}`, data),
   removeTeamMember: (id: number) => api.delete(`/event/event-team/${id}`),
+  cancelar: (id: number, motivo: string) =>
+    api.patch(`/event/${id}/cancelar`, { motivo }),
+  clonar: (id: number) => api.post(`/event/${id}/clonar`),
 };
 
 // =====================
@@ -127,6 +135,12 @@ export const occurrenceApi = {
     api.patch(`/equipment-occurrence/${id}/confirmar`),
   cancelar: (id: number) =>
     api.patch(`/equipment-occurrence/${id}/cancelar`),
+  resolver: (id: number) =>
+    api.patch(`/equipment-occurrence/${id}/resolver`),
+  achar: (id: number) =>
+    api.patch(`/equipment-occurrence/${id}/achar`),
+  editar: (id: number, data: { quantidade?: number; descricao?: string }) =>
+    api.patch(`/equipment-occurrence/${id}`, data),
 };
 
 // =====================

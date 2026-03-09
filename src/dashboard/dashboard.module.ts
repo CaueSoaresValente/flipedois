@@ -8,15 +8,15 @@ import { DashboardService } from './dashboard.service';
 import { DashboardController } from './dashboard.controller';
 
 @Module({
-    imports: [
-        TypeOrmModule.forFeature([
-            Equipment,
-            Checklist,
-            Event,
-            EquipmentOccurrence,
-        ]),
-    ],
-    controllers: [DashboardController],
-    providers: [DashboardService],
+  imports: [
+    TypeOrmModule.forFeature([
+      Equipment,
+      Checklist,
+      Event,
+      EquipmentOccurrence,
+    ]),
+  ],
+  controllers: [DashboardController],
+  providers: [DashboardService],
 })
-export class DashboardModule { }
+export class DashboardModule {}

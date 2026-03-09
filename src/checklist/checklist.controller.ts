@@ -15,12 +15,17 @@ import { CancelarChecklistDto } from './dto/cancelar-checklist.dto';
 
 @Controller('checklist')
 export class ChecklistController {
-  constructor(private readonly service: ChecklistService) { }
+  constructor(private readonly service: ChecklistService) {}
 
   @Roles('ADMIN')
   @Post()
   create(@Body() dto: CreateChecklistDto, @Req() req: any) {
-    return this.service.create(dto.nome, dto.eventId, req.user.sub, req.user.email);
+    return this.service.create(
+      dto.nome,
+      dto.eventId,
+      req.user.sub,
+      req.user.email,
+    );
   }
 
   @Get()
@@ -46,13 +51,38 @@ export class ChecklistController {
     @Body('eventId', ParseIntPipe) eventId: number,
     @Req() req: any,
   ) {
-    return this.service.vincularEvento(id, eventId, req.user.sub, req.user.email);
+    return this.service.vincularEvento(
+      id,
+      eventId,
+      req.user.sub,
+      req.user.email,
+    );
   }
 
   @Roles('ADMIN')
   @Post(':id/clonar')
-  clonar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    return this.service.clonar(id, req.user.sub, req.user.email);
+  clonar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('nomeNovo') nomeNovo: string,
+    @Req() req: any,
+  ) {
+    return this.service.clonar(id, nomeNovo, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id/nome')
+  updateNome(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('nome') nome: string,
+    @Req() req: any,
+  ) {
+    return this.service.updateNome(id, nome, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id/reativar')
+  reativar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.reativar(id, req.user.sub, req.user.email);
   }
 
   @Roles('ADMIN')

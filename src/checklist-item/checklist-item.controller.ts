@@ -17,6 +17,7 @@ import { DevolverItemDto } from './dto/devolver-item.dto';
 import { UpdateChecklistItemDto } from './dto/update-checklist-item.dto';
 import { TrocarEquipmentDto } from './dto/trocar-equipment.dto';
 import { CancelarSeparacaoDto } from './dto/cancelar-separacao.dto';
+import { EditarDevolucaoDto } from './dto/editar-devolucao.dto';
 
 @Controller('checklist-item')
 export class ChecklistItemController {
@@ -69,7 +70,26 @@ export class ChecklistItemController {
     );
   }
 
-  // Admin updates planned quantity (draft only)
+  // Admin/FUNCIONARIO podem corrigir composição da devolução (ok/quebrado/perdido)
+  // (ex.: funcionário remove marcação de dano/perda → anula ocorrência e devolve ao saldo)
+  @Roles('FUNCIONARIO', 'ADMIN')
+  @Patch(':id/editar-devolucao')
+  editarDevolucao(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: EditarDevolucaoDto,
+    @Req() req: any,
+  ) {
+    return this.service.editarDevolucao(
+      id,
+      dto.ok,
+      dto.quebrado,
+      dto.perdido,
+      req.user.sub,
+      req.user.email,
+    );
+  }
+
+  // Admin updates planned quantity (rascunho/liberado/em_evento/pendente_devolucao)
   @Roles('ADMIN')
   @Patch(':id')
   updateQuantidade(
@@ -85,7 +105,7 @@ export class ChecklistItemController {
     );
   }
 
-  // Admin removes item (draft only)
+  // Admin removes item (rascunho ou liberado)
   @Roles('ADMIN')
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {

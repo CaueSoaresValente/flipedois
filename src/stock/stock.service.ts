@@ -63,7 +63,9 @@ export class StockService {
     });
 
     if (!equipment) {
-      throw new BadRequestException(`Equipamento ID ${equipmentId} não encontrado.`);
+      throw new BadRequestException(
+        `Equipamento ID ${equipmentId} não encontrado.`,
+      );
     }
 
     return equipment;
@@ -108,10 +110,10 @@ export class StockService {
   /**
    * LIBERAR CHECKLIST: Reserva estoque ao liberar um checklist.
    *
-   * Interno:  disponivel -= quantidade, emUso += quantidade
-   * Alugado:  emUso += quantidade (não controla disponivel)
+   * Regra de ouro (interno e alugado):
+   *   disponivel -= quantidade, emUso += quantidade
    *
-   * Bloqueia se estoque interno insuficiente.
+   * Bloqueia se estoque insuficiente.
    */
   async reservarEstoque(
     manager: EntityManager,
@@ -120,15 +122,19 @@ export class StockService {
   ): Promise<Equipment> {
     const equipment = await this.getEquipmentWithLock(manager, equipmentId);
 
-    if (equipment.origem === 'interno') {
-      if (quantidade > equipment.quantidadeDisponivel) {
-        throw new BadRequestException(
-          `Estoque insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}, Solicitado: ${quantidade}.`,
-        );
-      }
-      equipment.quantidadeDisponivel -= quantidade;
+    if (quantidade <= 0) {
+      throw new BadRequestException(
+        'Quantidade inválida para reservar estoque.',
+      );
     }
 
+    if (quantidade > equipment.quantidadeDisponivel) {
+      throw new BadRequestException(
+        `Estoque insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}, Solicitado: ${quantidade}.`,
+      );
+    }
+
+    equipment.quantidadeDisponivel -= quantidade;
     equipment.quantidadeEmUso += quantidade;
 
     this.validarEstoque(equipment);
@@ -138,8 +144,9 @@ export class StockService {
   /**
    * CANCELAR LIBERAÇÃO: Reverte a reserva (cancela checklist/evento ou reduz quantidade).
    *
-   * Interno:  disponivel += quantidade
-   * Ambos:    emUso -= quantidade
+   * Regra de ouro (interno e alugado):
+   *   disponivel += quantidade
+   *   emUso -= quantidade
    */
   async liberarReserva(
     manager: EntityManager,
@@ -148,9 +155,20 @@ export class StockService {
   ): Promise<Equipment> {
     const equipment = await this.getEquipmentWithLock(manager, equipmentId);
 
-    if (equipment.origem === 'interno') {
-      equipment.quantidadeDisponivel += quantidade;
+    if (quantidade <= 0) {
+      throw new BadRequestException(
+        'Quantidade inválida para liberar reserva.',
+      );
     }
+
+    // Guard forte: não aceitar estados inconsistentes (rollback via exception)
+    if (quantidade > equipment.quantidadeEmUso) {
+      throw new BadRequestException(
+        `Não é possível liberar ${quantidade} de "${equipment.nome}" porque emUso atual é ${equipment.quantidadeEmUso}.`,
+      );
+    }
+
+    equipment.quantidadeDisponivel += quantidade;
     equipment.quantidadeEmUso -= quantidade;
 
     this.validarEstoque(equipment);
@@ -164,8 +182,9 @@ export class StockService {
   /**
    * DEVOLUÇÃO OK: Equipamento devolvido em bom estado.
    *
-   * Interno:  disponivel += quantidade, emUso -= quantidade
-   * Alugado:  emUso -= quantidade (não recupera disponivel)
+   * Regra de ouro (interno e alugado):
+   *   disponivel += quantidade
+   *   emUso -= quantidade
    *
    * CORRIGIDO: Antes retornava early para alugados sem decrementar emUso.
    */
@@ -176,10 +195,17 @@ export class StockService {
   ): Promise<Equipment> {
     const equipment = await this.getEquipmentWithLock(manager, equipmentId);
 
-    if (equipment.origem === 'interno') {
-      equipment.quantidadeDisponivel += quantidade;
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida para devolução.');
     }
-    // ✅ CORRIGIDO: Aplica para todos os tipos de origem (interno e alugado)
+
+    if (quantidade > equipment.quantidadeEmUso) {
+      throw new BadRequestException(
+        `Devolução excede o emUso atual de "${equipment.nome}". Em uso: ${equipment.quantidadeEmUso}, devolvendo: ${quantidade}.`,
+      );
+    }
+
+    equipment.quantidadeDisponivel += quantidade;
     equipment.quantidadeEmUso -= quantidade;
 
     this.validarEstoque(equipment);
@@ -202,6 +228,16 @@ export class StockService {
     quantidade: number,
   ): Promise<Equipment> {
     const equipment = await this.getEquipmentWithLock(manager, equipmentId);
+
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida para devolução.');
+    }
+
+    if (quantidade > equipment.quantidadeEmUso) {
+      throw new BadRequestException(
+        `Devolução excede o emUso atual de "${equipment.nome}". Em uso: ${equipment.quantidadeEmUso}, devolvendo: ${quantidade}.`,
+      );
+    }
 
     equipment.quantidadeEmUso -= quantidade;
     equipment.quantidadeDanificada += quantidade;
@@ -227,6 +263,16 @@ export class StockService {
     quantidade: number,
   ): Promise<Equipment> {
     const equipment = await this.getEquipmentWithLock(manager, equipmentId);
+
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida para devolução.');
+    }
+
+    if (quantidade > equipment.quantidadeEmUso) {
+      throw new BadRequestException(
+        `Devolução excede o emUso atual de "${equipment.nome}". Em uso: ${equipment.quantidadeEmUso}, devolvendo: ${quantidade}.`,
+      );
+    }
 
     equipment.quantidadeEmUso -= quantidade;
     equipment.quantidadePerdida += quantidade;
@@ -257,8 +303,8 @@ export class StockService {
   ): Promise<Equipment> {
     const equipment = await this.getEquipmentWithLock(manager, equipmentId);
 
-    if (equipment.origem !== 'interno') {
-      return equipment;
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida para cancelar dano.');
     }
 
     if (quantidade > equipment.quantidadeDanificada) {
@@ -292,8 +338,8 @@ export class StockService {
   ): Promise<Equipment> {
     const equipment = await this.getEquipmentWithLock(manager, equipmentId);
 
-    if (equipment.origem !== 'interno') {
-      return equipment;
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida para cancelar perda.');
     }
 
     if (quantidade > equipment.quantidadePerdida) {
@@ -325,8 +371,82 @@ export class StockService {
   ): Promise<Equipment> {
     const equipment = await this.getEquipmentWithLock(manager, equipmentId);
 
+    if (delta === 0) return equipment;
+
     equipment.quantidadeTotal += delta;
     equipment.quantidadeDisponivel += delta;
+
+    this.validarEstoque(equipment);
+    return manager.save(Equipment, equipment);
+  }
+
+  // ============================================================
+  // OCORRÊNCIA MANUAL (Manual damage/loss — stock from disponivel)
+  // ============================================================
+
+  /**
+   * DANO MANUAL: Equipamento danificado fora do fluxo de devolução.
+   * Reduz de disponível (não de emUso).
+   *
+   * disponivel -= quantidade
+   * danificada += quantidade
+   * total -= quantidade
+   */
+  async registrarDanoManual(
+    manager: EntityManager,
+    equipmentId: number,
+    quantidade: number,
+  ): Promise<Equipment> {
+    const equipment = await this.getEquipmentWithLock(manager, equipmentId);
+
+    if (quantidade <= 0) {
+      throw new BadRequestException('Quantidade inválida para registrar dano.');
+    }
+
+    if (quantidade > equipment.quantidadeDisponivel) {
+      throw new BadRequestException(
+        `Estoque disponível insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}, Solicitado: ${quantidade}.`,
+      );
+    }
+
+    equipment.quantidadeDisponivel -= quantidade;
+    equipment.quantidadeDanificada += quantidade;
+    equipment.quantidadeTotal -= quantidade;
+
+    this.validarEstoque(equipment);
+    return manager.save(Equipment, equipment);
+  }
+
+  /**
+   * PERDA MANUAL: Equipamento perdido fora do fluxo de devolução.
+   * Reduz de disponível (não de emUso).
+   *
+   * disponivel -= quantidade
+   * perdida += quantidade
+   * total -= quantidade
+   */
+  async registrarPerdaManual(
+    manager: EntityManager,
+    equipmentId: number,
+    quantidade: number,
+  ): Promise<Equipment> {
+    const equipment = await this.getEquipmentWithLock(manager, equipmentId);
+
+    if (quantidade <= 0) {
+      throw new BadRequestException(
+        'Quantidade inválida para registrar perda.',
+      );
+    }
+
+    if (quantidade > equipment.quantidadeDisponivel) {
+      throw new BadRequestException(
+        `Estoque disponível insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}, Solicitado: ${quantidade}.`,
+      );
+    }
+
+    equipment.quantidadeDisponivel -= quantidade;
+    equipment.quantidadePerdida += quantidade;
+    equipment.quantidadeTotal -= quantidade;
 
     this.validarEstoque(equipment);
     return manager.save(Equipment, equipment);

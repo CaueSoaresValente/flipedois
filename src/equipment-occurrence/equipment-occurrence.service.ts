@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 
 import { EquipmentOccurrence } from './equipment-occurrence.entity';
 import { Equipment } from '../equipment/equipment.entity';
@@ -23,14 +23,61 @@ export class EquipmentOccurrenceService {
     private readonly stockService: StockService,
   ) {}
 
+  private async reverterImpactoEstoque(
+    manager: EntityManager,
+    occurrence: EquipmentOccurrence,
+  ) {
+    const { tipo, quantidade, equipment, status } = occurrence;
+
+    if (status === 'BAIXADO') {
+      if (tipo === 'DANO') {
+        await this.stockService.cancelarDano(manager, equipment.id, quantidade);
+      } else if (tipo === 'PERDA') {
+        await this.stockService.cancelarPerda(
+          manager,
+          equipment.id,
+          quantidade,
+        );
+      } else if (tipo === 'AJUSTE') {
+        await this.stockService.ajustarEstoque(
+          manager,
+          equipment.id,
+          -quantidade,
+        );
+      }
+      return;
+    }
+
+    if (status === 'PENDENTE') {
+      // DANO/PERDA: estoque já foi ajustado na devolução → reverter write-off
+      if (tipo === 'DANO') {
+        await this.stockService.cancelarDano(manager, equipment.id, quantidade);
+      } else if (tipo === 'PERDA') {
+        await this.stockService.cancelarPerda(
+          manager,
+          equipment.id,
+          quantidade,
+        );
+      } else if (tipo === 'AJUSTE') {
+        await this.stockService.ajustarEstoque(
+          manager,
+          equipment.id,
+          -quantidade,
+        );
+      }
+    }
+  }
+
   /**
    * Registra uma ocorrência de dano, perda ou ajuste.
    *
-   * IMPORTANTE: Para DANO e PERDA gerados via devolução de checklist,
-   * o estoque JÁ foi ajustado no momento da devolução.
-   * Esta ocorrência existe apenas como registro de auditoria.
+   * Para DANO e PERDA gerados via devolução de checklist (manual = false):
+   *   o estoque JÁ foi ajustado na devolução. Status = PENDENTE (auditoria).
    *
-   * Para AJUSTE: afeta estoque diretamente ao ser confirmada.
+   * Para DANO e PERDA manuais (manual = true):
+   *   ajusta estoque imediatamente: disponivel -= qty, danificada/perdida += qty, total -= qty
+   *
+   * Para AJUSTE: afeta estoque apenas ao ser confirmada.
    */
   async registrar(
     eventId: number | null,
@@ -39,38 +86,61 @@ export class EquipmentOccurrenceService {
     descricao?: string,
     tipo: 'DANO' | 'PERDA' | 'AJUSTE' = 'DANO',
     motivo?: string,
+    manual: boolean = false,
   ) {
-    const equipment = await this.equipmentRepo.findOne({
-      where: { id: equipmentId },
+    return this.dataSource.transaction(async (manager) => {
+      const equipment = await manager.findOne(Equipment, {
+        where: { id: equipmentId },
+      });
+
+      if (!equipment)
+        throw new BadRequestException('Equipamento não encontrado.');
+
+      let event: Event | null = null;
+      if (eventId) {
+        event = await manager.findOne(Event, { where: { id: eventId } });
+        if (!event) throw new BadRequestException('Evento não encontrado.');
+      }
+
+      if (quantidade <= 0) {
+        throw new BadRequestException(
+          'Quantidade inválida. Deve ser maior que zero.',
+        );
+      }
+
+      if (tipo === 'AJUSTE' && !motivo) {
+        throw new BadRequestException(
+          'Motivo é obrigatório para ajuste de estoque.',
+        );
+      }
+
+      // Manual DANO/PERDA: ajusta estoque imediatamente (de disponível)
+      if (manual && tipo === 'DANO') {
+        await this.stockService.registrarDanoManual(
+          manager,
+          equipmentId,
+          quantidade,
+        );
+      } else if (manual && tipo === 'PERDA') {
+        await this.stockService.registrarPerdaManual(
+          manager,
+          equipmentId,
+          quantidade,
+        );
+      }
+
+      const occurrence = manager.create(EquipmentOccurrence, {
+        equipment,
+        quantidade,
+        descricao,
+        tipo,
+        motivo,
+        status: 'PENDENTE',
+        ...(event ? { event } : {}),
+      });
+
+      return manager.save(EquipmentOccurrence, occurrence);
     });
-
-    if (!equipment) throw new BadRequestException('Equipamento não encontrado.');
-
-    let event: Event | null = null;
-    if (eventId) {
-      event = await this.eventRepo.findOne({ where: { id: eventId } });
-      if (!event) throw new BadRequestException('Evento não encontrado.');
-    }
-
-    if (quantidade <= 0) {
-      throw new BadRequestException('Quantidade inválida. Deve ser maior que zero.');
-    }
-
-    if (tipo === 'AJUSTE' && !motivo) {
-      throw new BadRequestException('Motivo é obrigatório para ajuste de estoque.');
-    }
-
-    const occurrence = this.repo.create({
-      equipment,
-      quantidade,
-      descricao,
-      tipo,
-      motivo,
-      status: 'PENDENTE',
-      ...(event ? { event } : {}),
-    });
-
-    return this.repo.save(occurrence);
   }
 
   /**
@@ -91,7 +161,8 @@ export class EquipmentOccurrenceService {
         relations: ['equipment'],
       });
 
-      if (!occurrence) throw new BadRequestException('Ocorrência não encontrada.');
+      if (!occurrence)
+        throw new BadRequestException('Ocorrência não encontrada.');
 
       if (occurrence.status !== 'PENDENTE') {
         throw new BadRequestException('Ocorrência já foi processada.');
@@ -101,7 +172,11 @@ export class EquipmentOccurrenceService {
 
       if (tipo === 'AJUSTE') {
         // AJUSTE: único tipo que ainda afeta estoque na confirmação
-        await this.stockService.ajustarEstoque(manager, equipment.id, quantidade);
+        await this.stockService.ajustarEstoque(
+          manager,
+          equipment.id,
+          quantidade,
+        );
       }
       // DANO e PERDA: estoque já ajustado na devolução → sem ação adicional
 
@@ -133,38 +208,136 @@ export class EquipmentOccurrenceService {
         relations: ['equipment'],
       });
 
-      if (!occurrence) throw new BadRequestException('Ocorrência não encontrada.');
+      if (!occurrence)
+        throw new BadRequestException('Ocorrência não encontrada.');
 
-      if (occurrence.status === 'CANCELADO') {
-        throw new BadRequestException('Ocorrência já está cancelada.');
+      if (['CANCELADO', 'RESOLVIDO', 'ACHADO'].includes(occurrence.status)) {
+        throw new BadRequestException('Ocorrência já foi encerrada.');
       }
 
-      const { tipo, quantidade, equipment, status } = occurrence;
-
-      if (status === 'BAIXADO') {
-        // Ocorrência já confirmada — reverter ajuste de estoque
-        if (tipo === 'DANO') {
-          // Equipamento foi reparado: danificada → disponivel
-          await this.stockService.cancelarDano(manager, equipment.id, quantidade);
-        } else if (tipo === 'PERDA') {
-          // Equipamento foi recuperado: perdida → disponivel
-          await this.stockService.cancelarPerda(manager, equipment.id, quantidade);
-        } else if (tipo === 'AJUSTE') {
-          await this.stockService.ajustarEstoque(manager, equipment.id, -quantidade);
-        }
-      } else if (status === 'PENDENTE') {
-        // ✅ CORRIGIDO: Para DANO/PERDA pendentes, o estoque JÁ foi ajustado na devolução.
-        // Cancelar a ocorrência pendente significa que o item foi revisado e está OK.
-        // Nenhuma ação adicional de estoque é necessária, pois o write-off já ocorreu.
-        // Se o item foi de fato recuperado/reparado, a ocorrência deve ser primeiro
-        // confirmada (BAIXADO) e então cancelada para restaurar o estoque.
-        if (tipo === 'AJUSTE') {
-          await this.stockService.ajustarEstoque(manager, equipment.id, -quantidade);
-        }
-        // DANO/PERDA pendentes: no-op (estoque já foi ajustado na devolução)
-      }
+      await this.reverterImpactoEstoque(manager, occurrence);
 
       occurrence.status = 'CANCELADO';
+      return manager.save(EquipmentOccurrence, occurrence);
+    });
+  }
+
+  async resolver(id: number) {
+    return this.dataSource.transaction(async (manager) => {
+      const occurrence = await manager.findOne(EquipmentOccurrence, {
+        where: { id },
+        relations: ['equipment'],
+      });
+      if (!occurrence)
+        throw new BadRequestException('Ocorrência não encontrada.');
+      if (['CANCELADO', 'RESOLVIDO', 'ACHADO'].includes(occurrence.status)) {
+        throw new BadRequestException('Ocorrência já foi encerrada.');
+      }
+
+      await this.reverterImpactoEstoque(manager, occurrence);
+      occurrence.status = 'RESOLVIDO';
+      return manager.save(EquipmentOccurrence, occurrence);
+    });
+  }
+
+  async achar(id: number) {
+    return this.dataSource.transaction(async (manager) => {
+      const occurrence = await manager.findOne(EquipmentOccurrence, {
+        where: { id },
+        relations: ['equipment'],
+      });
+      if (!occurrence)
+        throw new BadRequestException('Ocorrência não encontrada.');
+      if (['CANCELADO', 'RESOLVIDO', 'ACHADO'].includes(occurrence.status)) {
+        throw new BadRequestException('Ocorrência já foi encerrada.');
+      }
+
+      await this.reverterImpactoEstoque(manager, occurrence);
+      occurrence.status = 'ACHADO';
+      return manager.save(EquipmentOccurrence, occurrence);
+    });
+  }
+
+  /**
+   * EDITAR OCORRÊNCIA: Permite alterar quantidade e/ou descrição.
+   * Somente ocorrências PENDENTES podem ser editadas.
+   *
+   * Se a quantidade mudar, a diferença é aplicada atomicamente:
+   *   1. Reverte o impacto original (DANO/PERDA manual: disponivel +=, danificada/perdida -=, total +=)
+   *   2. Aplica o novo impacto (disponivel -=, danificada/perdida +=, total -=)
+   *
+   * Nota: Ocorrências geradas via devolução (manual=false) tiveram estoque ajustado
+   * na devolução. Reverter e re-aplicar com nova quantidade mantém integridade.
+   */
+  async editar(id: number, quantidade?: number, descricao?: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const occurrence = await manager.findOne(EquipmentOccurrence, {
+        where: { id },
+        relations: ['equipment'],
+      });
+
+      if (!occurrence)
+        throw new BadRequestException('Ocorrência não encontrada.');
+
+      if (occurrence.status !== 'PENDENTE') {
+        throw new BadRequestException(
+          'Somente ocorrências pendentes podem ser editadas.',
+        );
+      }
+
+      // Atualizar descrição se fornecida
+      if (descricao !== undefined) {
+        occurrence.descricao = descricao;
+      }
+
+      // Atualizar quantidade se fornecida e diferente
+      if (quantidade !== undefined && quantidade !== occurrence.quantidade) {
+        if (quantidade <= 0) {
+          throw new BadRequestException(
+            'Quantidade inválida. Deve ser maior que zero.',
+          );
+        }
+
+        const { tipo, equipment } = occurrence;
+        const qtyAntiga = occurrence.quantidade;
+
+        // 1. Reverter impacto original
+        if (tipo === 'DANO') {
+          await this.stockService.cancelarDano(
+            manager,
+            equipment.id,
+            qtyAntiga,
+          );
+        } else if (tipo === 'PERDA') {
+          await this.stockService.cancelarPerda(
+            manager,
+            equipment.id,
+            qtyAntiga,
+          );
+        } else if (tipo === 'AJUSTE') {
+          // AJUSTE PENDENTE: estoque ainda não foi ajustado na confirmação
+          // Nada a reverter
+        }
+
+        // 2. Aplicar novo impacto
+        if (tipo === 'DANO') {
+          await this.stockService.registrarDanoManual(
+            manager,
+            equipment.id,
+            quantidade,
+          );
+        } else if (tipo === 'PERDA') {
+          await this.stockService.registrarPerdaManual(
+            manager,
+            equipment.id,
+            quantidade,
+          );
+        }
+        // AJUSTE: será aplicado apenas na confirmação
+
+        occurrence.quantidade = quantidade;
+      }
+
       return manager.save(EquipmentOccurrence, occurrence);
     });
   }

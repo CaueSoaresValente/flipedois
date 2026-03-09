@@ -7,7 +7,7 @@ import { UpdateEquipmentDto } from './dto/update-equipment.dto';
 
 @Controller('equipment')
 export class EquipmentController {
-  constructor(private readonly service: EquipmentService) { }
+  constructor(private readonly service: EquipmentService) {}
 
   @Roles('ADMIN')
   @Post()

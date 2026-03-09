@@ -17,6 +17,7 @@ import StatusBadge from '../components/StatusBadge';
 import EquipmentSearch from '../components/EquipmentSearch';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import { useNavigate, useParams } from 'react-router-dom';
 
 interface ChecklistItem {
   id: number;
@@ -107,6 +108,8 @@ export default function Checklists() {
   const [events, setEvents] = useState<EventOption[]>([]);
   const { isAdmin, user } = useAuth();
   const { addToast } = useToast();
+  const { id: routeId } = useParams();
+  const navigate = useNavigate();
 
   // Create form
   const [nome, setNome] = useState('');
@@ -121,6 +124,11 @@ export default function Checklists() {
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
   const [confirmRemoveItem, setConfirmRemoveItem] = useState<number | null>(null);
 
+  // Rename after clone (status rascunho)
+  const [renameModal, setRenameModal] = useState<{ id: number; nome: string } | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [lowStockNames, setLowStockNames] = useState<string[]>([]);
+
   // Separation modal with stepper
   const [separateModal, setSeparateModal] = useState<ChecklistItem | null>(null);
   const [separateQty, setSeparateQty] = useState(1);
@@ -133,12 +141,33 @@ export default function Checklists() {
     perdido: number;
   }>({ ok: 0, quebrado: 0, perdido: 0 });
 
+  // Edit planned quantity modal (sem remover/adicionar)
+  const [editQtyModal, setEditQtyModal] = useState<ChecklistItem | null>(null);
+  const [editQtyValue, setEditQtyValue] = useState(1);
+
+  // Edit return composition modal (corrigir OK/Qb/Pd mantendo total)
+  const [editReturnModal, setEditReturnModal] = useState<ChecklistItem | null>(null);
+  const [editReturnConditions, setEditReturnConditions] = useState<{
+    ok: number;
+    quebrado: number;
+    perdido: number;
+  }>({ ok: 0, quebrado: 0, perdido: 0 });
+
   // Separation blocking modal
   const [pendingModal, setPendingModal] = useState(false);
 
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    // Abrir checklist diretamente via rota /checklists/:id
+    const idNum = routeId ? Number(routeId) : null;
+    if (!idNum || Number.isNaN(idNum)) return;
+    if (loading) return;
+    openChecklistById(idNum);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeId, loading]);
 
   async function load() {
     try {
@@ -154,6 +183,18 @@ export default function Checklists() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function openChecklistById(id: number) {
+    try {
+      const r = await checklistApi.getOne(id);
+      setSelected(r.data);
+      setModalItems(true);
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Checklist não encontrado');
+      // Volta para a lista, mantendo UX consistente
+      navigate('/checklists');
     }
   }
 
@@ -203,10 +244,34 @@ export default function Checklists() {
       if (res.data.alertas?.length > 0) {
         res.data.alertas.forEach((a: string) => addToast('warning', a));
       }
-      addToast('success', 'Checklist clonado — vincule ao evento antes de liberar');
-      load();
+      const novoId = res.data?.checklist?.id;
+      const nomeNovo = res.data?.checklist?.nome ?? 'Novo checklist';
+       const itensBaixoEstoque = (res.data?.itensEstoqueInsuficiente ?? []) as { nome: string }[];
+       setLowStockNames(itensBaixoEstoque.map((i) => i.nome));
+      if (novoId) {
+        setRenameModal({ id: novoId, nome: nomeNovo });
+        setRenameValue(nomeNovo);
+        await refreshSelected(novoId);
+        setModalItems(true);
+      }
+      addToast('success', 'Checklist clonado (rascunho). Você pode renomear agora.');
+      await load();
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao clonar');
+    }
+  }
+
+  async function handleRenameChecklist(e: React.FormEvent) {
+    e.preventDefault();
+    if (!renameModal) return;
+    try {
+      await checklistApi.updateNome(renameModal.id, renameValue);
+      addToast('success', 'Nome do checklist atualizado');
+      setRenameModal(null);
+      setRenameValue('');
+      load();
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao renomear checklist');
     }
   }
 
@@ -302,6 +367,41 @@ export default function Checklists() {
     }
   }
 
+  async function handleUpdateQuantidade() {
+    if (!editQtyModal || !selected) return;
+    try {
+      await checklistItemApi.update(editQtyModal.id, editQtyValue);
+      addToast('success', 'Quantidade atualizada');
+      setEditQtyModal(null);
+      await refreshSelected(selected.id);
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao atualizar quantidade');
+    }
+  }
+
+  async function handleEditarDevolucao() {
+    if (!editReturnModal || !selected) return;
+    const totalAnterior = (editReturnModal.quantidadeOk ?? 0) + (editReturnModal.quantidadeQuebrada ?? 0) + (editReturnModal.quantidadePerdida ?? 0);
+    const totalNovo = editReturnConditions.ok + editReturnConditions.quebrado + editReturnConditions.perdido;
+    if (totalNovo !== totalAnterior) {
+      addToast('error', `O total devolvido deve permanecer ${totalAnterior}.`);
+      return;
+    }
+    try {
+      await checklistItemApi.editarDevolucao(
+        editReturnModal.id,
+        editReturnConditions.ok,
+        editReturnConditions.quebrado,
+        editReturnConditions.perdido,
+      );
+      addToast('success', 'Devolução editada (estoque/ocorrências atualizados)');
+      setEditReturnModal(null);
+      await refreshSelected(selected.id);
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao editar devolução');
+    }
+  }
+
   // Check if admin can finalize checklist
   function canFinalizarChecklist(cl: Checklist | null): boolean {
     if (!cl || !isAdmin) return false;
@@ -316,7 +416,7 @@ export default function Checklists() {
 
   // Admin can edit/correct returns; funcionario performs normal returns
   const canReturn =
-    ['em_evento', 'pendente_devolucao'].includes(selected?.status ?? '');
+    ['em_evento', 'pendente_devolucao', 'concluido'].includes(selected?.status ?? '');
 
   // Pending separation items for blocking modal
   const pendingItems = (selected?.items ?? []).filter(
@@ -524,7 +624,7 @@ export default function Checklists() {
               )}
             </div>
             <div className="flex gap-2 flex-wrap">
-              {isAdmin && selected?.status === 'rascunho' && (
+              {isAdmin && selected && ['rascunho', 'liberado'].includes(selected.status) && (
                 <button
                   onClick={() => setModalAddItem(true)}
                   className="flex items-center gap-1.5 text-xs bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-medium"
@@ -659,14 +759,31 @@ export default function Checklists() {
                     !isAdmin &&
                     ['em_evento', 'pendente_devolucao'].includes(selected?.status ?? '') &&
                     item.quantidadeDevolvida < item.quantidadeSeparada;
+                  const canEditPlanned =
+                    isAdmin &&
+                    ['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(selected?.status ?? '') &&
+                    selected?.status !== 'cancelado';
+                  const isLowStockCloned = lowStockNames.includes(item.nomeSnapshot);
 
                   return (
                     <tr
                       key={item.id}
-                      className={isPending ? 'bg-red-50 dark:bg-red-900/10' : ''}
+                      className={
+                        isPending
+                          ? 'bg-red-50 dark:bg-red-900/10'
+                          : isLowStockCloned
+                          ? 'bg-red-50/60 dark:bg-red-900/20'
+                          : ''
+                      }
                     >
                       <td className="px-3 py-2">
-                        <p className="font-medium text-slate-700 dark:text-slate-200">
+                        <p
+                          className={
+                            isLowStockCloned
+                              ? 'font-medium text-red-700 dark:text-red-300'
+                              : 'font-medium text-slate-700 dark:text-slate-200'
+                          }
+                        >
                           {item.nomeSnapshot}
                         </p>
                         <p className="text-xs text-slate-400">{item.setor}</p>
@@ -726,7 +843,7 @@ export default function Checklists() {
                                   Math.max(1, item.quantidadePlanejada - item.quantidadeSeparada),
                                 );
                               }}
-                              className="text-xs px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 hover:bg-blue-100 transition-colors font-medium"
+                              className="text-xs font-medium text-blue-600 dark:text-white hover:underline"
                             >
                               Separar
                             </button>
@@ -738,29 +855,42 @@ export default function Checklists() {
                                 const remaining = item.quantidadeSeparada - item.quantidadeDevolvida;
                                 setReturnConditions({ ok: remaining, quebrado: 0, perdido: 0 });
                               }}
-                              className="text-xs px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 hover:bg-emerald-100 transition-colors font-medium"
+                              className="text-xs font-medium text-emerald-600 dark:text-white hover:underline"
                             >
                               <RotateCcw size={11} className="inline mr-0.5" />
                               Devolver
                             </button>
                           )}
-                          {isAdmin && canReturn && item.quantidadeDevolvida < item.quantidadeSeparada && (
+                          {canReturn && item.quantidadeDevolvida > 0 && (
                             <button
                               onClick={() => {
-                                setReturnModal(item);
-                                const remaining = item.quantidadeSeparada - item.quantidadeDevolvida;
-                                setReturnConditions({ ok: remaining, quebrado: 0, perdido: 0 });
+                                setEditReturnModal(item);
+                                setEditReturnConditions({
+                                  ok: item.quantidadeOk ?? 0,
+                                  quebrado: item.quantidadeQuebrada ?? 0,
+                                  perdido: item.quantidadePerdida ?? 0,
+                                });
                               }}
-                              className="text-xs px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 hover:bg-emerald-100 transition-colors font-medium"
+                              className="text-xs font-medium text-slate-700 dark:text-white hover:underline"
                             >
-                              <RotateCcw size={11} className="inline mr-0.5" />
                               Editar Devolução
                             </button>
                           )}
-                          {isAdmin && selected?.status === 'rascunho' && (
+                          {canEditPlanned && (
+                            <button
+                              onClick={() => {
+                                setEditQtyModal(item);
+                                setEditQtyValue(item.quantidadePlanejada);
+                              }}
+                              className="text-xs font-medium text-indigo-600 dark:text-white hover:underline"
+                            >
+                              Editar qtd
+                            </button>
+                          )}
+                          {isAdmin && selected && ['rascunho', 'liberado'].includes(selected.status) && (
                             <button
                               onClick={() => setConfirmRemoveItem(item.id)}
-                              className="text-xs px-2 py-1 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 hover:bg-red-100 transition-colors"
+                              className="text-xs font-medium text-red-600 dark:text-white hover:underline"
                             >
                               Remover
                             </button>
@@ -983,6 +1113,86 @@ export default function Checklists() {
         })()}
       </Modal>
 
+      {/* Edit planned quantity modal */}
+      <Modal
+        open={editQtyModal !== null}
+        onClose={() => { setEditQtyModal(null); }}
+        title={`Editar quantidade — ${editQtyModal?.nomeSnapshot ?? ''}`}
+      >
+        {editQtyModal && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou além), o sistema ajusta o estoque automaticamente (Saldo Disponível ↔ Em Uso).
+            </p>
+            <div className="flex justify-center py-2">
+              <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} />
+            </div>
+            <button
+              onClick={handleUpdateQuantidade}
+              className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
+            >
+              Salvar quantidade
+            </button>
+          </div>
+        )}
+      </Modal>
+
+      {/* Edit return composition modal */}
+      <Modal
+        open={editReturnModal !== null}
+        onClose={() => { setEditReturnModal(null); setEditReturnConditions({ ok: 0, quebrado: 0, perdido: 0 }); }}
+        title={`Editar devolução — ${editReturnModal?.nomeSnapshot ?? ''}`}
+      >
+        {editReturnModal && (() => {
+          const total = (editReturnModal.quantidadeOk ?? 0) + (editReturnModal.quantidadeQuebrada ?? 0) + (editReturnModal.quantidadePerdida ?? 0);
+          const totalNovo = editReturnConditions.ok + editReturnConditions.quebrado + editReturnConditions.perdido;
+          return (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 bg-slate-50 dark:bg-slate-700/30">
+                <p className="text-sm text-slate-700 dark:text-slate-200 font-medium">
+                  Total devolvido deve permanecer: <strong>{total}</strong>
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-300 mt-1">
+                  Ao remover “Dano” ou “Perda”, a ocorrência vinculada será anulada e a quantidade retorna ao saldo disponível.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {[
+                  { key: 'ok' as const, label: '✓ OK', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
+                  { key: 'quebrado' as const, label: '✕ Quebrado (Dano)', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
+                  { key: 'perdido' as const, label: '? Perdido (Perda)', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
+                ].map(({ key, label, color }) => (
+                  <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</span>
+                    <QuantityStepper
+                      value={editReturnConditions[key]}
+                      onChange={(v) => setEditReturnConditions((prev) => ({ ...prev, [key]: v }))}
+                      min={0}
+                      max={total - (totalNovo - editReturnConditions[key])}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className={`text-center py-2 rounded-xl text-sm font-medium ${
+                totalNovo === total ? 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-200' : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-200'
+              }`}>
+                Total atual: <strong>{totalNovo}</strong> / {total}
+              </div>
+
+              <button
+                onClick={handleEditarDevolucao}
+                disabled={totalNovo !== total}
+                className="w-full bg-slate-800 hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
+              >
+                Salvar edição da devolução
+              </button>
+            </div>
+          );
+        })()}
+      </Modal>
+
       {/* Separation Pending Items blocking modal */}
       <Modal
         open={pendingModal}
@@ -1050,6 +1260,34 @@ export default function Checklists() {
         confirmLabel="Remover"
         type="danger"
       />
+
+      {/* Rename cloned checklist */}
+      <Modal
+        open={renameModal !== null}
+        onClose={() => { setRenameModal(null); setRenameValue(''); }}
+        title={`Renomear Checklist — ${renameModal?.nome ?? ''}`}
+      >
+        <form onSubmit={handleRenameChecklist} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Nome/Título
+            </label>
+            <input
+              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              required
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={!renameValue.trim()}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            Salvar
+          </button>
+        </form>
+      </Modal>
     </div>
   );
 }

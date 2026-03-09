@@ -15,12 +15,11 @@ import { useState } from 'react';
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/equipamentos', label: 'Equipamentos', icon: Package },
-  { to: '/checklists', label: 'Checklists', icon: ClipboardList },
   { to: '/eventos', label: 'Eventos', icon: Calendar },
-  { to: '/ocorrencias', label: 'Ocorrências', icon: AlertTriangle },
 ];
 
 const adminItems = [
+  { to: '/ocorrencias', label: 'Ocorrências', icon: AlertTriangle },
   { to: '/usuarios', label: 'Usuários', icon: Users },
   { to: '/logs', label: 'Logs', icon: ScrollText },
 ];
@@ -41,7 +40,7 @@ export default function Sidebar() {
       <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 dark:border-slate-700">
         {!collapsed && (
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-gradient-to-br from-[#1A237E] to-[#0D47A1] rounded-lg flex items-center justify-center">
               <span className="text-white font-bold text-sm">F</span>
             </div>
             <span className="font-bold text-slate-800 dark:text-white text-lg">
@@ -50,7 +49,7 @@ export default function Sidebar() {
           </div>
         )}
         {collapsed && (
-          <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center mx-auto">
+          <div className="w-8 h-8 bg-gradient-to-br from-[#1A237E] to-[#0D47A1] rounded-lg flex items-center justify-center mx-auto">
             <span className="text-white font-bold text-sm">F</span>
           </div>
         )}
@@ -65,7 +64,7 @@ export default function Sidebar() {
               key={item.to}
               to={item.to}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group ${isActive
-                  ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
+                  ? 'bg-[#1A237E]/10 dark:bg-[#1A237E]/20 text-[#1A237E] dark:text-[#00BCD4]'
                   : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 hover:text-slate-700 dark:hover:text-slate-200'
                 }`}
               title={collapsed ? item.label : undefined}
@@ -74,7 +73,7 @@ export default function Sidebar() {
                 size={20}
                 className={
                   isActive
-                    ? 'text-indigo-600 dark:text-indigo-400'
+                    ? 'text-[#1A237E] dark:text-[#00BCD4]'
                     : 'text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300'
                 }
               />

@@ -28,26 +28,39 @@ export class ChecklistService {
     private readonly stockService: StockService,
   ) {}
 
-  async create(nome: string, eventId: number, userId?: number, userEmail?: string) {
+  async create(
+    nome: string,
+    eventId: number,
+    userId?: number,
+    userEmail?: string,
+  ) {
     if (!nome || nome.trim().length === 0) {
       throw new BadRequestException('Nome do checklist é obrigatório.');
     }
 
     if (!eventId) {
-      throw new BadRequestException('Checklist precisa estar vinculado a um evento.');
+      throw new BadRequestException(
+        'Checklist precisa estar vinculado a um evento.',
+      );
     }
 
-    const event = await this.eventRepository.findOne({ where: { id: eventId } });
+    const event = await this.eventRepository.findOne({
+      where: { id: eventId },
+    });
     if (!event) {
       throw new BadRequestException('Evento não encontrado.');
     }
 
     if (event.status === 'finalizado') {
-      throw new BadRequestException('Não é possível criar checklist para evento finalizado.');
+      throw new BadRequestException(
+        'Não é possível criar checklist para evento finalizado.',
+      );
     }
 
     if (event.status === 'cancelado') {
-      throw new BadRequestException('Não é possível criar checklist para evento cancelado.');
+      throw new BadRequestException(
+        'Não é possível criar checklist para evento cancelado.',
+      );
     }
 
     const checklist = this.checklistRepository.create({
@@ -150,7 +163,11 @@ export class ChecklistService {
 
       // Reserva estoque via StockService (verifica disponibilidade internamente)
       for (const [equipmentId, quantidade] of mapa.entries()) {
-        await this.stockService.reservarEstoque(manager, equipmentId, quantidade);
+        await this.stockService.reservarEstoque(
+          manager,
+          equipmentId,
+          quantidade,
+        );
       }
 
       checklist.status = 'liberado';
@@ -173,7 +190,12 @@ export class ChecklistService {
   /**
    * ATUALIZAR NOME: Permite renomear checklist em qualquer status não terminal.
    */
-  async updateNome(id: number, nome: string, userId?: number, userEmail?: string) {
+  async updateNome(
+    id: number,
+    nome: string,
+    userId?: number,
+    userEmail?: string,
+  ) {
     if (!nome || nome.trim().length === 0) {
       throw new BadRequestException('Nome não pode ser vazio.');
     }
@@ -184,7 +206,9 @@ export class ChecklistService {
     }
 
     if (['concluido', 'cancelado'].includes(checklist.status)) {
-      throw new BadRequestException('Não é possível renomear checklist concluído ou cancelado.');
+      throw new BadRequestException(
+        'Não é possível renomear checklist concluído ou cancelado.',
+      );
     }
 
     const nomeAnterior = checklist.nome;
@@ -204,7 +228,12 @@ export class ChecklistService {
     return saved;
   }
 
-  async vincularEvento(checklistId: number, eventId: number, userId?: number, userEmail?: string) {
+  async vincularEvento(
+    checklistId: number,
+    eventId: number,
+    userId?: number,
+    userEmail?: string,
+  ) {
     const checklist = await this.checklistRepository.findOne({
       where: { id: checklistId },
     });
@@ -214,10 +243,14 @@ export class ChecklistService {
     }
 
     if (checklist.status !== 'rascunho') {
-      throw new BadRequestException('Só é possível vincular evento em checklist rascunho.');
+      throw new BadRequestException(
+        'Só é possível vincular evento em checklist rascunho.',
+      );
     }
 
-    const event = await this.eventRepository.findOne({ where: { id: eventId } });
+    const event = await this.eventRepository.findOne({
+      where: { id: eventId },
+    });
     if (!event) {
       throw new BadRequestException('Evento não encontrado.');
     }
@@ -238,7 +271,12 @@ export class ChecklistService {
     return saved;
   }
 
-  async clonar(checklistId: number, nomeNovo?: string, userId?: number, userEmail?: string) {
+  async clonar(
+    checklistId: number,
+    nomeNovo?: string,
+    userId?: number,
+    userEmail?: string,
+  ) {
     const checklistOriginal = await this.checklistRepository.findOne({
       where: { id: checklistId },
       relations: ['items'],
@@ -264,6 +302,7 @@ export class ChecklistService {
     const checklistSalvo = await this.checklistRepository.save(novoChecklist);
 
     const alertas: string[] = [];
+    const itensEstoqueInsuficiente: { equipmentId: number; nome: string }[] = [];
 
     for (const item of checklistOriginal.items) {
       const equipment = await this.equipmentRepository.findOne({
@@ -279,6 +318,10 @@ export class ChecklistService {
         alertas.push(
           `${equipment.nome}: estoque atual ${equipment.quantidadeDisponivel}, solicitado ${item.quantidadePlanejada}`,
         );
+        itensEstoqueInsuficiente.push({
+          equipmentId: equipment.id,
+          nome: equipment.nome,
+        });
       }
 
       const novoItem = this.checklistItemRepository.create({
@@ -310,6 +353,7 @@ export class ChecklistService {
     return {
       checklist: checklistSalvo,
       alertas,
+      itensEstoqueInsuficiente,
     };
   }
 
@@ -356,7 +400,9 @@ export class ChecklistService {
               item.equipmentId,
               item.quantidadePlanejada,
             );
-          } else if (['em_evento', 'pendente_devolucao'].includes(checklist.status)) {
+          } else if (
+            ['em_evento', 'pendente_devolucao'].includes(checklist.status)
+          ) {
             // Calcula o que ainda está em emUso:
             // planejado - (ok + quebrado + perdido) = não devolvido
             // ok -> já retornou para disponivel
@@ -368,7 +414,11 @@ export class ChecklistService {
               (item.quantidadePerdida || 0);
             const emUsoRestante = item.quantidadePlanejada - totalDevolvido;
             if (emUsoRestante > 0) {
-              await this.stockService.liberarReserva(manager, item.equipmentId, emUsoRestante);
+              await this.stockService.liberarReserva(
+                manager,
+                item.equipmentId,
+                emUsoRestante,
+              );
             }
           }
         }
@@ -438,5 +488,59 @@ export class ChecklistService {
       status: checklist.status,
       alertas,
     };
+  }
+
+  /**
+   * REATIVAR: Restaura um checklist cancelado de volta para rascunho.
+   * Sem impacto no estoque (estoque já foi liberado no cancelamento).
+   * Evento deve estar ativo.
+   */
+  async reativar(id: number, userId?: number, userEmail?: string) {
+    const checklist = await this.checklistRepository.findOne({
+      where: { id },
+      relations: ['event'],
+    });
+
+    if (!checklist) {
+      throw new BadRequestException('Checklist não encontrado.');
+    }
+
+    if (checklist.status !== 'cancelado') {
+      throw new BadRequestException(
+        `Somente checklists cancelados podem ser reativados. Status atual: "${checklist.status}".`,
+      );
+    }
+
+    if (checklist.event) {
+      if (checklist.event.status === 'finalizado') {
+        throw new BadRequestException(
+          'Não é possível reativar checklist de evento finalizado.',
+        );
+      }
+      if (checklist.event.status === 'cancelado') {
+        throw new BadRequestException(
+          'Não é possível reativar checklist de evento cancelado.',
+        );
+      }
+    }
+
+    checklist.status = 'rascunho';
+    checklist.motivoCancelamento = undefined;
+    checklist.canceladoPor = undefined;
+    checklist.canceladoEm = undefined;
+
+    const saved = await this.checklistRepository.save(checklist);
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'REATIVAR',
+      'checklist',
+      id,
+      { status: 'cancelado → rascunho' },
+      `Checklist "${checklist.nome}" reativado`,
+    );
+
+    return saved;
   }
 }

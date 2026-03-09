@@ -8,7 +8,12 @@ import {
 import { Event } from '../event/event.entity';
 import { Equipment } from '../equipment/equipment.entity';
 
-export type OccurrenceStatus = 'PENDENTE' | 'BAIXADO' | 'CANCELADO';
+export type OccurrenceStatus =
+  | 'PENDENTE'
+  | 'BAIXADO'
+  | 'CANCELADO'
+  | 'RESOLVIDO'
+  | 'ACHADO';
 export type OccurrenceTipo = 'DANO' | 'PERDA' | 'AJUSTE';
 
 @Entity('equipment_occurrence')

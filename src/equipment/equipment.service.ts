@@ -13,7 +13,7 @@ export class EquipmentService {
     private readonly repository: Repository<Equipment>,
 
     private readonly auditLogService: AuditLogService,
-  ) { }
+  ) {}
 
   async create(dto: CreateEquipmentDto, userId?: number, userEmail?: string) {
     const origem = dto.origem ?? 'interno';
@@ -23,7 +23,9 @@ export class EquipmentService {
     }
 
     if (dto.quantidadeTotal <= 0 && origem === 'interno') {
-      throw new BadRequestException('Quantidade inválida para equipamento interno');
+      throw new BadRequestException(
+        'Quantidade inválida para equipamento interno',
+      );
     }
 
     const equipment = this.repository.create({
@@ -74,7 +76,12 @@ export class EquipmentService {
   }
 
   // Fix #3: Explicit field mapping instead of Object.assign
-  async update(id: number, dto: UpdateEquipmentDto, userId?: number, userEmail?: string) {
+  async update(
+    id: number,
+    dto: UpdateEquipmentDto,
+    userId?: number,
+    userEmail?: string,
+  ) {
     const equipment = await this.repository.findOne({ where: { id } });
 
     if (!equipment) {
@@ -94,7 +101,10 @@ export class EquipmentService {
       }
 
       const diferenca = dto.quantidadeTotal - equipment.quantidadeTotal;
-      changes.quantidadeTotal = { de: equipment.quantidadeTotal, para: dto.quantidadeTotal };
+      changes.quantidadeTotal = {
+        de: equipment.quantidadeTotal,
+        para: dto.quantidadeTotal,
+      };
       equipment.quantidadeDisponivel += diferenca;
       equipment.quantidadeTotal = dto.quantidadeTotal;
     }
@@ -132,7 +142,9 @@ export class EquipmentService {
 
     // Ensure stock never goes negative
     if (equipment.quantidadeDisponivel < 0) {
-      throw new BadRequestException('Estoque disponível não pode ficar negativo');
+      throw new BadRequestException(
+        'Estoque disponível não pode ficar negativo',
+      );
     }
 
     const saved = await this.repository.save(equipment);

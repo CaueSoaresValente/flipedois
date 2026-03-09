@@ -1,4 +1,10 @@
-import { IsString, IsDateString, IsInt, ValidateNested, IsOptional } from 'class-validator';
+import {
+  IsString,
+  IsDateString,
+  IsInt,
+  ValidateNested,
+  IsOptional,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 class TeamDto {

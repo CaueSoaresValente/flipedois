@@ -33,8 +33,8 @@ export class EventController {
   }
 
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Req() req: any) {
+    return this.service.findAll(req.user?.role);
   }
 
   @Get(':id')
@@ -93,5 +93,11 @@ export class EventController {
     @Req() req: any,
   ) {
     return this.service.cancelar(id, dto.motivo, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Post(':id/clonar')
+  clonar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.clonar(id, req.user.sub, req.user.email);
   }
 }

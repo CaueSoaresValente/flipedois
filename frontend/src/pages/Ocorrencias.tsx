@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Plus, Check, X } from 'lucide-react';
+import { AlertTriangle, Plus, Check, X, RefreshCw, Search, Edit3 } from 'lucide-react';
 import { occurrenceApi, equipmentApi, eventApi } from '../services/api';
 import Modal from '../components/Modal';
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 
 interface Occurrence {
   id: number;
@@ -23,7 +24,12 @@ export default function Ocorrencias() {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingOccurrence, setEditingOccurrence] = useState<Occurrence | null>(null);
+  const [editQuantidade, setEditQuantidade] = useState(1);
+  const [editDescricao, setEditDescricao] = useState('');
   const { isAdmin } = useAuth();
+  const { addToast } = useToast();
 
   // Form
   const [equipmentId, setEquipmentId] = useState('');
@@ -68,8 +74,9 @@ export default function Ocorrencias() {
       setModalOpen(false);
       resetForm();
       load();
+      addToast('success', 'Ocorrência registrada com sucesso.');
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Erro');
+      addToast('error', err.response?.data?.message || 'Erro ao registrar ocorrência.');
     }
   }
 
@@ -86,8 +93,9 @@ export default function Ocorrencias() {
     try {
       await occurrenceApi.confirmar(id);
       load();
+      addToast('success', 'Ocorrência confirmada.');
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Erro');
+      addToast('error', err.response?.data?.message || 'Erro ao confirmar.');
     }
   }
 
@@ -95,8 +103,53 @@ export default function Ocorrencias() {
     try {
       await occurrenceApi.cancelar(id);
       load();
+      addToast('success', 'Ocorrência cancelada. Estoque restaurado.');
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Erro');
+      addToast('error', err.response?.data?.message || 'Erro ao cancelar.');
+    }
+  }
+
+  async function handleResolver(id: number) {
+    try {
+      await occurrenceApi.resolver(id);
+      load();
+      addToast('success', 'Ocorrência resolvida. Estoque restaurado.');
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao resolver.');
+    }
+  }
+
+  async function handleAchar(id: number) {
+    try {
+      await occurrenceApi.achar(id);
+      load();
+      addToast('success', 'Item marcado como achado. Estoque restaurado.');
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao marcar como achado.');
+    }
+  }
+
+  function openEditModal(oc: Occurrence) {
+    setEditingOccurrence(oc);
+    setEditQuantidade(oc.quantidade);
+    setEditDescricao(oc.descricao || '');
+    setEditModalOpen(true);
+  }
+
+  async function handleEditar(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingOccurrence) return;
+    try {
+      await occurrenceApi.editar(editingOccurrence.id, {
+        quantidade: editQuantidade,
+        descricao: editDescricao,
+      });
+      setEditModalOpen(false);
+      setEditingOccurrence(null);
+      load();
+      addToast('success', 'Ocorrência editada com sucesso.');
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao editar ocorrência.');
     }
   }
 
@@ -117,7 +170,7 @@ export default function Ocorrencias() {
             <h1 className="text-2xl font-bold text-slate-800 dark:text-white">
               Ocorrências
             </h1>
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               {items.length} ocorrência(s)
             </p>
           </div>
@@ -136,26 +189,26 @@ export default function Ocorrencias() {
           <table className="w-full">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-700/50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
+                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
                   Equipamento
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
+                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
                   Tipo
                 </th>
-                <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
+                <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
                   Qtd
                 </th>
-                <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
+                <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
                   Status
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
+                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
                   Evento
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
+                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
                   Data
                 </th>
                 {isAdmin && (
-                  <th className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
+                  <th className="text-right px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
                     Ações
                   </th>
                 )}
@@ -174,44 +227,69 @@ export default function Ocorrencias() {
                     <span
                       className={`text-xs px-2 py-1 rounded-full font-medium ${
                         oc.tipo === 'DANO'
-                          ? 'bg-red-100 dark:bg-red-900/20 text-red-600'
+                          ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                           : oc.tipo === 'PERDA'
-                          ? 'bg-orange-100 dark:bg-orange-900/20 text-orange-600'
-                          : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600'
+                          ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
+                          : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
                       }`}
                     >
                       {oc.tipo}
                     </span>
                   </td>
-                  <td className="px-6 py-3 text-center text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  <td className="px-6 py-3 text-center text-sm font-semibold text-slate-800 dark:text-white">
                     {oc.quantidade}
                   </td>
                   <td className="px-6 py-3 text-center">
                     <StatusBadge status={oc.status} />
                   </td>
-                  <td className="px-6 py-3 text-sm text-slate-500">
+                  <td className="px-6 py-3 text-sm text-slate-500 dark:text-slate-400">
                     {oc.event?.nome ?? '—'}
                   </td>
-                  <td className="px-6 py-3 text-sm text-slate-400">
+                  <td className="px-6 py-3 text-sm text-slate-400 dark:text-slate-500">
                     {new Date(oc.createdAt).toLocaleDateString('pt-BR')}
                   </td>
                   {isAdmin && (
                     <td className="px-6 py-3 text-right">
-                      {oc.status === 'PENDENTE' && (
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => handleConfirmar(oc.id)}
-                            className="p-1.5 rounded-lg text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
-                            title="Confirmar baixa"
-                          >
-                            <Check size={16} />
-                          </button>
+                      {['PENDENTE', 'BAIXADO'].includes(oc.status) && (
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {oc.status === 'PENDENTE' && (
+                            <>
+                              <button
+                                onClick={() => handleConfirmar(oc.id)}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors"
+                                title="Confirmar baixa"
+                              >
+                                <Check size={13} /> Baixar
+                              </button>
+                              <button
+                                onClick={() => openEditModal(oc)}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
+                                title="Editar ocorrência"
+                              >
+                                <Edit3 size={13} /> Editar
+                              </button>
+                            </>
+                          )}
                           <button
                             onClick={() => handleCancelar(oc.id)}
-                            className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                            title="Cancelar"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                            title="Cancelar (restaura estoque)"
                           >
-                            <X size={16} />
+                            <X size={13} /> Cancelar
+                          </button>
+                          <button
+                            onClick={() => handleResolver(oc.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors"
+                            title="Marcar como Resolvido (restaura estoque)"
+                          >
+                            <RefreshCw size={13} /> Resolvido
+                          </button>
+                          <button
+                            onClick={() => handleAchar(oc.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 hover:bg-teal-200 dark:hover:bg-teal-900/50 transition-colors"
+                            title="Marcar como Achado (restaura estoque)"
+                          >
+                            <Search size={13} /> Achado
                           </button>
                         </div>
                       )}
@@ -222,7 +300,7 @@ export default function Ocorrencias() {
             </tbody>
           </table>
           {items.length === 0 && (
-            <div className="p-8 text-center text-slate-400">
+            <div className="p-8 text-center text-slate-400 dark:text-slate-500">
               Nenhuma ocorrência registrada
             </div>
           )}
@@ -332,6 +410,57 @@ export default function Ocorrencias() {
           </button>
         </form>
       </Modal>
+
+      {/* Edit Modal */}
+      <Modal
+        open={editModalOpen}
+        onClose={() => { setEditModalOpen(false); setEditingOccurrence(null); }}
+        title="Editar Ocorrência"
+      >
+        {editingOccurrence && (
+          <form onSubmit={handleEditar} className="space-y-4">
+            <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-3">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                {editingOccurrence.equipment?.nome}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Tipo: <span className="font-medium">{editingOccurrence.tipo}</span> • Status: <StatusBadge status={editingOccurrence.status} />
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Quantidade
+              </label>
+              <input
+                type="number"
+                min="1"
+                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+                value={editQuantidade}
+                onChange={(e) => setEditQuantidade(Number(e.target.value))}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Descrição
+              </label>
+              <textarea
+                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+                rows={2}
+                value={editDescricao}
+                onChange={(e) => setEditDescricao(e.target.value)}
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
+            >
+              Salvar Alterações
+            </button>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }
+

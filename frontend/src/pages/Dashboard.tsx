@@ -6,6 +6,8 @@ import {
   AlertTriangle,
   Activity,
   TrendingDown,
+  Clock,
+  ArrowRight,
 } from 'lucide-react';
 import {
   dashboardApi,
@@ -13,6 +15,7 @@ import {
 } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 interface DashboardStats {
   equipamentos: {
@@ -39,6 +42,8 @@ interface RecentChecklist {
   nome: string;
   status: string;
   createdAt: string;
+  eventId?: number;
+  items?: { quantidadePlanejada: number; quantidadeSeparada: number; quantidadeDevolvida: number }[];
 }
 
 export default function Dashboard() {
@@ -46,6 +51,7 @@ export default function Dashboard() {
   const [recentChecklists, setRecentChecklists] = useState<RecentChecklist[]>([]);
   const [loading, setLoading] = useState(true);
   const { isAdmin } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     loadData();
@@ -70,7 +76,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
+        <div className="animate-spin w-8 h-8 border-4 border-[#1A237E] border-t-transparent rounded-full" />
       </div>
     );
   }
@@ -82,8 +88,8 @@ export default function Dashboard() {
         value: stats.equipamentos.total,
         sub: `${stats.equipamentos.unidadesDisponiveis} unid. disponíveis`,
         icon: Package,
-        bgLight: 'bg-blue-50 dark:bg-blue-900/20',
-        color: 'text-blue-500',
+        bgLight: 'bg-[#1A237E]/10 dark:bg-[#1A237E]/20',
+        color: 'text-[#1A237E] dark:text-[#00BCD4]',
       },
       {
         label: 'Eventos Ativos',
@@ -91,38 +97,43 @@ export default function Dashboard() {
         sub: `${stats.eventos.total} total`,
         icon: Calendar,
         bgLight: 'bg-purple-50 dark:bg-purple-900/20',
-        color: 'text-purple-500',
+        color: 'text-purple-600 dark:text-purple-400',
       },
       {
         label: 'Checklists',
         value: stats.checklists.total,
         sub: `${stats.checklists.porStatus?.liberado ?? 0} liberados`,
         icon: ClipboardList,
-        bgLight: 'bg-emerald-50 dark:bg-emerald-900/20',
-        color: 'text-emerald-500',
+        bgLight: 'bg-[#2E7D32]/10 dark:bg-[#2E7D32]/20',
+        color: 'text-[#2E7D32] dark:text-emerald-400',
       },
       {
         label: 'Ocorrências Pendentes',
         value: stats.ocorrencias.pendentes,
         sub: 'aguardando confirmação',
         icon: AlertTriangle,
-        bgLight: 'bg-amber-50 dark:bg-amber-900/20',
-        color: 'text-amber-500',
+        bgLight: 'bg-[#D32F2F]/10 dark:bg-[#D32F2F]/20',
+        color: 'text-[#D32F2F] dark:text-red-400',
       },
     ]
     : [];
+
+  // Employee tasks: only show checklists that have been released (not drafts)
+  const employeeTasks = recentChecklists.filter(
+    (cl) => ['liberado', 'em_evento', 'pendente_devolucao'].includes(cl.status)
+  );
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Activity className="text-indigo-500" size={24} />
+        <Activity className="text-[#1A237E] dark:text-[#00BCD4]" size={24} />
         <div>
           <h1 className="text-2xl font-bold text-slate-800 dark:text-white">
-            Dashboard
+            {isAdmin ? 'Dashboard — Gestão' : 'Dashboard — Operacional'}
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Visão geral do sistema
+            {isAdmin ? 'Visão geral do sistema' : 'Suas tarefas do dia'}
           </p>
         </div>
       </div>
@@ -149,7 +160,7 @@ export default function Dashboard() {
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                   {card.label}
                 </p>
-                <p className="text-xs text-slate-400 mt-0.5">{card.sub}</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{card.sub}</p>
               </div>
             ))}
           </div>
@@ -179,6 +190,50 @@ export default function Dashboard() {
         </>
       )}
 
+      {/* Employee Operational View */}
+      {!isAdmin && (
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+            <Clock size={18} className="text-[#FF8C00]" />
+            <h2 className="font-semibold text-slate-800 dark:text-white">
+              Tarefas Pendentes
+            </h2>
+          </div>
+          <div className="divide-y divide-slate-100 dark:divide-slate-700">
+            {employeeTasks.length === 0 ? (
+              <div className="p-6 text-center text-slate-400">
+                <p className="text-lg">✅</p>
+                <p className="mt-1">Nenhuma tarefa pendente no momento</p>
+              </div>
+            ) : (
+              employeeTasks.map((cl) => (
+                <button
+                  key={cl.id}
+                  type="button"
+                  onClick={() => navigate(cl.eventId ? `/eventos/${cl.eventId}` : '/eventos')}
+                  className="w-full text-left flex items-center justify-between px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors group"
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-slate-700 dark:text-white text-sm">
+                        {cl.nome}
+                      </p>
+                      <StatusBadge status={cl.status} />
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {cl.status === 'liberado' && '🔧 Aguardando separação'}
+                      {cl.status === 'em_evento' && '📦 Em uso no evento'}
+                      {cl.status === 'pendente_devolucao' && '↩️ Devolução pendente'}
+                    </p>
+                  </div>
+                  <ArrowRight size={16} className="text-slate-300 group-hover:text-[#00BCD4] transition-colors" />
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Recent Checklists */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
@@ -198,10 +253,10 @@ export default function Dashboard() {
                 className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
               >
                 <div>
-                  <p className="font-medium text-slate-700 dark:text-slate-200 text-sm">
+                  <p className="font-medium text-slate-700 dark:text-white text-sm">
                     {cl.nome}
                   </p>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-400 dark:text-slate-500">
                     {new Date(cl.createdAt).toLocaleDateString('pt-BR')}
                   </p>
                 </div>
