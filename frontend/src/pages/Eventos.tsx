@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Calendar, Plus, Users as UsersIcon, Edit3, CheckCircle, CheckCircle2, XCircle, Ban, Copy, ChevronDown, ChevronUp, PackageCheck, RotateCcw, ClipboardList, X, AlertCircle } from 'lucide-react';
 import { eventApi, checklistApi, checklistItemApi, equipmentApi } from '../services/api';
 import Modal from '../components/Modal';
@@ -94,7 +94,7 @@ export default function Eventos() {
   const navigate = useNavigate();
   const { eventId: paramEventId } = useParams();
 
-  // Checklist dentro da tela do Evento (Tela Ãšnica)
+  // Checklist dentro da tela do Evento (Tela Unica)
   const [modalChecklist, setModalChecklist] = useState(false);
   const [checklistModal, setChecklistModal] = useState<ChecklistData | null>(null);
   const [checklistParentEventId, setChecklistParentEventId] = useState<number | null>(null);
@@ -324,7 +324,7 @@ export default function Eventos() {
         const clRes = await checklistApi.getOne(novoId);
         setChecklistModal(clRes.data);
       }
-      addToast('success', 'Checklist clonado (rascunho). VocÃª pode renomear agora.');
+      addToast('success', 'Checklist clonado (rascunho). Voce pode renomear agora.');
       await load();
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao clonar checklist');
@@ -391,7 +391,7 @@ export default function Eventos() {
           await checklistItemApi.devolver(returnModal.id, qty, situacao);
         }
       }
-      addToast('success', 'DevoluÃ§Ã£o registrada com sucesso');
+      addToast('success', 'Devolucao registrada com sucesso');
       setReturnModal(null);
       setReturnConditions({ ok: 0, quebrado: 0, perdido: 0 });
       await refreshChecklistModal();
@@ -416,11 +416,11 @@ export default function Eventos() {
         editReturnConditions.quebrado,
         editReturnConditions.perdido,
       );
-      addToast('success', 'DevoluÃ§Ã£o editada (estoque/ocorrÃªncias atualizados)');
+      addToast('success', 'Devolucao editada (estoque/ocorrencias atualizados)');
       setEditReturnModal(null);
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao editar devoluÃ§Ã£o');
+      addToast('error', err.response?.data?.message || 'Erro ao editar devolucao');
     }
   }
 
@@ -468,7 +468,7 @@ export default function Eventos() {
     e.preventDefault();
     try {
       if (!validateDates(dataInicio, dataFim)) {
-        addToast('error', 'Data de inÃ­cio deve ser anterior Ã  data de fim');
+        addToast('error', 'Data de inicio deve ser anterior a data de fim');
         return;
       }
       await eventApi.create({
@@ -534,7 +534,7 @@ export default function Eventos() {
     if (!selectedEvent) return;
     try {
       if (!validateDates(editDataInicio, editDataFim)) {
-        addToast('error', 'Data de inÃ­cio deve ser anterior Ã  data de fim');
+        addToast('error', 'Data de inicio deve ser anterior a data de fim');
         return;
       }
       await eventApi.update(selectedEvent.id, {
@@ -577,7 +577,7 @@ export default function Eventos() {
         const nomes = alertas.map((a) => `${a.nome} (disp: ${a.disponivel}, sol: ${a.solicitado})`).join(', ');
         addToast('warning', `Evento clonado: "${novo?.nome}". âš ï¸ Itens com estoque insuficiente: ${nomes}. Ajuste antes de liberar.`);
       } else {
-        addToast('success', `Evento clonado: "${novo?.nome ?? 'cÃ³pia'}"`);
+        addToast('success', `Evento clonado: "${novo?.nome ?? 'copia'}"`);
       }
       await load();
     } catch (err: any) {
@@ -680,7 +680,7 @@ export default function Eventos() {
                   </h3>
                   {ev.status === 'finalizado' ? (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-medium">
-                      âœ“ Finalizado
+                      âœ" Finalizado
                     </span>
                   ) : ev.status === 'cancelado' ? (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-medium">
@@ -731,9 +731,9 @@ export default function Eventos() {
             </div>
 
             <div className="space-y-1 text-sm text-slate-500 dark:text-slate-400">
-              <p>ðŸ“ {ev.local}</p>
+              <p>{ev.local}</p>
               <p>
-                ðŸ“… {new Date(ev.dataInicio).toLocaleDateString('pt-BR')} â€“{' '}
+                {new Date(ev.dataInicio).toLocaleDateString('pt-BR')} -{' '}
                 {new Date(ev.dataFim).toLocaleDateString('pt-BR')}
               </p>
               {ev.checklists?.length > 0 && (
@@ -742,7 +742,7 @@ export default function Eventos() {
                     <div key={cl.id} className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-xs flex items-center gap-1 truncate">
-                          ðŸ“‹ <span className="truncate">{cl.nome}</span>
+                          <ClipboardList size={11} className="flex-shrink-0" /> <span className="truncate">{cl.nome}</span>
                           <span className={`ml-1 text-xs font-medium px-1.5 py-0.5 rounded ${
                             cl.status === 'concluido' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300' :
                             cl.status === 'liberado' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' :
@@ -788,11 +788,11 @@ export default function Eventos() {
                 </button>
               )}
               {ev.equipe?.length > 0 && (
-                <p className="text-xs">ðŸ‘¥ {ev.equipe.length} membro(s) na equipe</p>
+                <p className="text-xs"><UsersIcon size={11} className="inline mr-0.5" /> {ev.equipe.length} membro(s) na equipe</p>
               )}
               {ev.finalizadoPor && (
                 <p className="text-xs text-emerald-600 dark:text-emerald-400">
-                  âœ“ Finalizado por {ev.finalizadoPor}
+                  <CheckCircle size={11} className="inline mr-0.5" /> Finalizado por {ev.finalizadoPor}
                   {ev.finalizadoEm ? ` em ${new Date(ev.finalizadoEm).toLocaleDateString('pt-BR')}` : ''}
                 </p>
               )}
@@ -814,7 +814,7 @@ export default function Eventos() {
             {isAdmin && ev.status !== 'finalizado' && ev.checklists?.length > 0 && !canFinalizar(ev) && (
               <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
                 <XCircle size={14} />
-                Aguardando conclusÃ£o dos checklists
+                Aguardando conclusao dos checklists
               </div>
             )}
           </div>
@@ -843,7 +843,7 @@ export default function Eventos() {
               value={nome}
               onChange={(e) => setNome(e.target.value)}
               required
-              placeholder="Ex: Festival de VerÃ£o 2025"
+              placeholder="Ex: Festival de Verao 2025"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -873,7 +873,7 @@ export default function Eventos() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Data InÃ­cio
+                Data Inicio
               </label>
               <input
                 type="datetime-local"
@@ -915,7 +915,7 @@ export default function Eventos() {
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              ObservaÃ§Ãµes
+              Observacoes
             </label>
             <textarea
               className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
@@ -937,7 +937,7 @@ export default function Eventos() {
       <Modal
         open={modalEdit}
         onClose={() => setModalEdit(false)}
-        title={`Editar Evento â€” ${selectedEvent?.nome ?? ''}`}
+        title={`Editar Evento â€" ${selectedEvent?.nome ?? ''}`}
       >
         <form onSubmit={handleEdit} className="space-y-4">
           <div>
@@ -973,7 +973,7 @@ export default function Eventos() {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data InÃ­cio</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data Inicio</label>
               <input
                 type="datetime-local"
                 className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
@@ -994,7 +994,7 @@ export default function Eventos() {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">ObservaÃ§Ãµes</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Observacoes</label>
             <textarea
               className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
               rows={3}
@@ -1006,7 +1006,7 @@ export default function Eventos() {
             type="submit"
             className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
           >
-            Salvar AlteraÃ§Ãµes
+            Salvar Alteracoes
           </button>
         </form>
       </Modal>
@@ -1017,7 +1017,7 @@ export default function Eventos() {
         onClose={() => setConfirmFinalizar(null)}
         onConfirm={handleFinalizar}
         title="Finalizar Evento"
-        message={`Deseja finalizar o evento "${confirmFinalizar?.nome}"? Esta aÃ§Ã£o Ã© irreversÃ­vel e indica que todos os equipamentos foram devolvidos e o evento foi concluÃ­do.`}
+        message={`Deseja finalizar o evento "${confirmFinalizar?.nome}"? Esta acao e irreversivel e indica que todos os equipamentos foram devolvidos e o evento foi concluido.`}
         confirmLabel="Finalizar"
         type="success"
       />
@@ -1026,11 +1026,11 @@ export default function Eventos() {
       <Modal
         open={confirmCancelar !== null}
         onClose={() => setConfirmCancelar(null)}
-        title={`Cancelar Evento â€” ${confirmCancelar?.nome ?? ''}`}
+        title={`Cancelar Evento â€" ${confirmCancelar?.nome ?? ''}`}
       >
         <div className="space-y-4">
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Esta aÃ§Ã£o irÃ¡ cancelar o evento e reverter todas as reservas de estoque ativas.
+            Esta acao ira cancelar o evento e reverter todas as reservas de estoque ativas.
           </p>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -1059,7 +1059,7 @@ export default function Eventos() {
       <Modal
         open={modalTeam}
         onClose={() => setModalTeam(false)}
-        title={`Equipe â€” ${selectedEvent?.nome ?? ''}`}
+        title={`Equipe â€" ${selectedEvent?.nome ?? ''}`}
       >
         <div className="space-y-4">
           {isAdmin && selectedEvent?.status !== 'finalizado' && (
@@ -1079,7 +1079,7 @@ export default function Eventos() {
                 onChange={(e) => setTeamFuncao(e.target.value)}
               >
                 <option value="montagem">Montagem</option>
-                <option value="operacao">OperaÃ§Ã£o</option>
+                <option value="operacao">Operacao</option>
                 <option value="desmontagem">Desmontagem</option>
               </select>
               <button
@@ -1124,7 +1124,7 @@ export default function Eventos() {
           setChecklistModal(null);
           setEquipments([]);
         }}
-        title={`Checklist â€” ${checklistModal?.nome ?? ''}`}
+        title={`Checklist â€" ${checklistModal?.nome ?? ''}`}
         maxWidth="max-w-5xl"
       >
         {checklistModal && (
@@ -1146,7 +1146,7 @@ export default function Eventos() {
                     onClick={handleLiberarChecklist}
                     className="text-xs px-3 py-1.5 rounded-lg bg-green-500 hover:bg-green-600 text-white transition-colors font-medium"
                   >
-                    âœ“ Liberar Checklist
+                    âœ" Liberar Checklist
                   </button>
                 )}
                 {isAdmin && ['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal.status) && (
@@ -1200,7 +1200,7 @@ export default function Eventos() {
                   <h4 className={`text-sm font-semibold ${
                     pendingReturnItems.length > 0 ? 'text-amber-800 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'
                   }`}>
-                    ðŸ“¦ Progresso de DevoluÃ§Ã£o
+                    <PackageCheck size={14} className="inline mr-1" />Progresso de Devolucao
                   </h4>
                   <span className={`text-sm font-bold ${
                     pendingReturnItems.length > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'
@@ -1240,7 +1240,7 @@ export default function Eventos() {
                     <th className="text-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300 whitespace-nowrap">Devol.</th>
                     <th className="text-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300 whitespace-nowrap">OK/Qb/Pd</th>
                     <th className="text-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300">Status</th>
-                    <th className="px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300">AÃ§Ãµes</th>
+                    <th className="px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300">Acoes</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
@@ -1282,7 +1282,7 @@ export default function Eventos() {
                         <td className="px-3 py-2 text-center">
                           <div className="flex gap-0.5 justify-center text-xs">
                             {(item.quantidadeOk ?? 0) > 0 && (
-                              <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeOk}âœ“</span>
+                              <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeOk}âœ"</span>
                             )}
                             {(item.quantidadeQuebrada ?? 0) > 0 && (
                               <span className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeQuebrada}âœ•</span>
@@ -1291,7 +1291,7 @@ export default function Eventos() {
                               <span className="bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadePerdida}?</span>
                             )}
                             {(item.quantidadeOk ?? 0) === 0 && (item.quantidadeQuebrada ?? 0) === 0 && (item.quantidadePerdida ?? 0) === 0 && (
-                              <span className="text-slate-400">â€”</span>
+                              <span className="text-slate-400">â€"</span>
                             )}
                           </div>
                         </td>
@@ -1335,7 +1335,7 @@ export default function Eventos() {
                                 }}
                                 className="text-xs font-medium px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
                               >
-                                Editar DevoluÃ§Ã£o
+                                Editar Devolucao
                               </button>
                             )}
                             {canEditPlanned && (
@@ -1396,9 +1396,9 @@ export default function Eventos() {
               >
                 <option value="som">Som</option>
                 <option value="luz">Luz</option>
-                <option value="video">VÃ­deo</option>
+                <option value="video">Video</option>
                 <option value="estrutura">Estrutura</option>
-                <option value="comunicacao">ComunicaÃ§Ã£o</option>
+                <option value="comunicacao">Comunicacao</option>
                 <option value="outros">Outros</option>
               </select>
             </div>
@@ -1417,12 +1417,12 @@ export default function Eventos() {
       <Modal
         open={editQtyItem !== null}
         onClose={() => setEditQtyItem(null)}
-        title={`Editar quantidade â€” ${editQtyItem?.nomeSnapshot ?? ''}`}
+        title={`Editar quantidade â€" ${editQtyItem?.nomeSnapshot ?? ''}`}
       >
         {editQtyItem && (
           <div className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou alÃ©m), o sistema ajusta o estoque automaticamente.
+              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou alem), o sistema ajusta o estoque automaticamente.
             </p>
             <div className="flex justify-center py-2">
               <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} />
@@ -1438,17 +1438,17 @@ export default function Eventos() {
         )}
       </Modal>
 
-      {/* Separation Modal â€” stepper + progress */}
+      {/* Separation Modal â€" stepper + progress */}
       <Modal
         open={separateModal !== null}
         onClose={() => { setSeparateModal(null); setSeparateQty(1); }}
-        title={`Separar â€” ${separateModal?.nomeSnapshot ?? ''}`}
+        title={`Separar â€" ${separateModal?.nomeSnapshot ?? ''}`}
       >
         <div className="space-y-5">
           <div className="grid grid-cols-3 gap-3 text-center">
             {[
               { label: 'Planejado', value: separateModal?.quantidadePlanejada ?? 0, color: 'text-slate-700 dark:text-slate-200' },
-              { label: 'JÃ¡ separado', value: separateModal?.quantidadeSeparada ?? 0, color: 'text-blue-600 dark:text-blue-400' },
+              { label: 'Ja separado', value: separateModal?.quantidadeSeparada ?? 0, color: 'text-blue-600 dark:text-blue-400' },
               { label: 'Restante', value: (separateModal?.quantidadePlanejada ?? 0) - (separateModal?.quantidadeSeparada ?? 0), color: 'text-amber-600 dark:text-amber-400 font-bold' },
             ].map((stat) => (
               <div key={stat.label} className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-3">
@@ -1475,16 +1475,16 @@ export default function Eventos() {
             disabled={separateQty <= 0}
             className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
           >
-            Confirmar SeparaÃ§Ã£o de {separateQty} unidade(s)
+            Confirmar Separacao de {separateQty} unidade(s)
           </button>
         </div>
       </Modal>
 
-      {/* Return Modal â€” segmented conditions */}
+      {/* Return Modal â€" segmented conditions */}
       <Modal
         open={returnModal !== null}
         onClose={() => { setReturnModal(null); setReturnConditions({ ok: 0, quebrado: 0, perdido: 0 }); }}
-        title={`Devolver â€” ${returnModal?.nomeSnapshot ?? ''}`}
+        title={`Devolver â€" ${returnModal?.nomeSnapshot ?? ''}`}
       >
         {returnModal && (() => {
           const remaining = returnModal.quantidadeSeparada - returnModal.quantidadeDevolvida;
@@ -1496,7 +1496,7 @@ export default function Eventos() {
               <div className="grid grid-cols-3 gap-3 text-center">
                 {[
                   { label: 'Separado', value: returnModal.quantidadeSeparada, color: 'text-blue-600 dark:text-blue-400' },
-                  { label: 'JÃ¡ devolvido', value: returnModal.quantidadeDevolvida, color: 'text-emerald-600 dark:text-emerald-400' },
+                  { label: 'Ja devolvido', value: returnModal.quantidadeDevolvida, color: 'text-emerald-600 dark:text-emerald-400' },
                   { label: 'Aguardando', value: remaining, color: 'text-amber-600 dark:text-amber-400 font-bold' },
                 ].map((stat) => (
                   <div key={stat.label} className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-3">
@@ -1506,13 +1506,13 @@ export default function Eventos() {
                 ))}
               </div>
 
-              <p className="text-sm text-slate-600 dark:text-slate-400 text-center">Selecione a quantidade por condiÃ§Ã£o:</p>
+              <p className="text-sm text-slate-600 dark:text-slate-400 text-center">Selecione a quantidade por condicao:</p>
 
               <div className="space-y-3">
                 {[
-                  { key: 'ok' as const, label: 'âœ“ OK â€” Em bom estado', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
-                  { key: 'quebrado' as const, label: 'âœ• Quebrado â€” Com dano', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
-                  { key: 'perdido' as const, label: '? Perdido â€” NÃ£o encontrado', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
+                  { key: 'ok' as const, label: 'âœ" OK â€" Em bom estado', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
+                  { key: 'quebrado' as const, label: 'âœ• Quebrado â€" Com dano', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
+                  { key: 'perdido' as const, label: '? Perdido â€" Nao encontrado', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
                 ].map(({ key, label, color }) => (
                   <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</span>
@@ -1541,7 +1541,7 @@ export default function Eventos() {
                 disabled={!isValid}
                 className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
               >
-                Confirmar DevoluÃ§Ã£o
+                Confirmar Devolucao
               </button>
             </div>
           );
@@ -1552,7 +1552,7 @@ export default function Eventos() {
       <Modal
         open={editReturnModal !== null}
         onClose={() => { setEditReturnModal(null); setEditReturnConditions({ ok: 0, quebrado: 0, perdido: 0 }); }}
-        title={`Editar devoluÃ§Ã£o â€” ${editReturnModal?.nomeSnapshot ?? ''}`}
+        title={`Editar devolucao â€" ${editReturnModal?.nomeSnapshot ?? ''}`}
       >
         {editReturnModal && (() => {
           const total = (editReturnModal.quantidadeOk ?? 0) + (editReturnModal.quantidadeQuebrada ?? 0) + (editReturnModal.quantidadePerdida ?? 0);
@@ -1564,13 +1564,13 @@ export default function Eventos() {
                   Total devolvido deve permanecer: <strong>{total}</strong>
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-300 mt-1">
-                  Ao remover "Dano" ou "Perda", a ocorrÃªncia vinculada serÃ¡ anulada e a quantidade retorna ao saldo disponÃ­vel.
+                  Ao remover "Dano" ou "Perda", a ocorrencia vinculada sera anulada e a quantidade retorna ao saldo disponivel.
                 </p>
               </div>
 
               <div className="space-y-3">
                 {[
-                  { key: 'ok' as const, label: 'âœ“ OK', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
+                  { key: 'ok' as const, label: 'âœ" OK', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
                   { key: 'quebrado' as const, label: 'âœ• Quebrado (Dano)', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
                   { key: 'perdido' as const, label: '? Perdido (Perda)', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
                 ].map(({ key, label, color }) => (
@@ -1597,7 +1597,7 @@ export default function Eventos() {
                 disabled={totalNovo !== total}
                 className="w-full bg-slate-800 hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
               >
-                Salvar ediÃ§Ã£o da devoluÃ§Ã£o
+                Salvar edicao da devolucao
               </button>
             </div>
           );
@@ -1619,12 +1619,12 @@ export default function Eventos() {
       <Modal
         open={renameModal !== null}
         onClose={() => { setRenameModal(null); setRenameValue(''); }}
-        title={`Renomear Checklist â€” ${renameModal?.nome ?? ''}`}
+        title={`Renomear Checklist â€" ${renameModal?.nome ?? ''}`}
       >
         <form onSubmit={handleRenameChecklist} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Nome/TÃ­tulo
+              Nome/Titulo
             </label>
             <input
               className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
