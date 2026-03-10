@@ -265,20 +265,21 @@ export class ChecklistItemService {
   }
 
   // ==============================
-  // DEVOLUÇÃO — Ajuste imediato de estoque via StockService
+  // DEVOLUÇÃO — Nova hierarquia de estoque (Felipe vs Funcionário)
   // ==============================
   /**
    * Registra a devolução de um item do checklist.
    *
-   * CORREÇÕES IMPLEMENTADAS:
+   * HIERARQUIA DE ESTOQUE:
    *
-   * OK:       disponivel += qty (interno), emUso -= qty (todos)
-   * Quebrado: emUso -= qty, danificada += qty, total -= qty  ← IMEDIATO, sem esperar ocorrência
-   * Perdido:  emUso -= qty, perdida += qty, total -= qty     ← IMEDIATO
+   * OK:       disponivel += qty, emUso -= qty  ← Ajuste imediato (sem controvérsia)
+   * Quebrado: NÃO altera estoque. Cria ocorrência PENDENTE. Item permanece em emUso.
+   * Perdido:  NÃO altera estoque. Cria ocorrência PENDENTE. Item permanece em emUso.
    *
-   * Ocorrência é criada como registro de auditoria (PENDENTE) sem impacto no estoque.
-   * A ocorrência pode ser "Confirmada como Baixa" (apenas muda status) ou cancelada
-   * (revertendo o damage: danificada → disponivel, total++).
+   * A baixa definitiva do patrimônio (emUso → danificada/perdida, total -= qty)
+   * SOMENTE ocorre quando o Felipe (admin) confirmar a ocorrência na tela de Ocorrências.
+   *
+   * Se o Felipe marcar como "Achado" ou "Resolvido", o sistema devolve de emUso → disponivel.
    */
   async devolverItem(
     itemId: number,
@@ -310,7 +311,9 @@ export class ChecklistItemService {
         const anterior = item.quantidadeDevolvida;
 
         // ============================================================
-        // AJUSTE DE ESTOQUE — Imediato para todos os casos
+        // AJUSTE DE ESTOQUE — Apenas para devolução OK
+        // Quebrado/Perdido: estoque NÃO é alterado aqui (permanece em emUso)
+        // A baixa definitiva é feita pelo Felipe na tela de Ocorrências
         // ============================================================
         if (situacao === 'ok') {
           item.quantidadeOk = (item.quantidadeOk || 0) + quantidade;
@@ -322,28 +325,17 @@ export class ChecklistItemService {
           );
         } else if (situacao === 'quebrado') {
           item.quantidadeQuebrada = (item.quantidadeQuebrada || 0) + quantidade;
-          // ✅ CORRIGIDO: Ajuste imediato — não permanece em emUso
-          // emUso -= qty, danificada += qty, total -= qty
-          await this.stockService.registrarDevolucaoDanificado(
-            manager,
-            item.equipmentId,
-            quantidade,
-          );
+          // ❌ NÃO ajusta estoque — permanece em emUso até confirmação do admin
         } else if (situacao === 'perdido') {
           item.quantidadePerdida = (item.quantidadePerdida || 0) + quantidade;
-          // ✅ CORRIGIDO: Ajuste imediato — não permanece em emUso
-          // emUso -= qty, perdida += qty, total -= qty
-          await this.stockService.registrarDevolucaoPerdido(
-            manager,
-            item.equipmentId,
-            quantidade,
-          );
+          // ❌ NÃO ajusta estoque — permanece em emUso até confirmação do admin
         }
 
         item.quantidadeDevolvida += quantidade;
 
         // ============================================================
-        // OCORRÊNCIA — Apenas rastreamento/auditoria (sem impacto no estoque)
+        // OCORRÊNCIA — Criada para Quebrado/Perdido (sem impacto no estoque)
+        // O admin deve confirmar a baixa para que o estoque seja efetivamente ajustado.
         // ============================================================
         if (situacao !== 'ok') {
           const tipoOcorrencia = situacao === 'quebrado' ? 'DANO' : 'PERDA';
@@ -357,7 +349,7 @@ export class ChecklistItemService {
             quantidade,
             descricao: `Devolução: "${item.nomeSnapshot}" registrado como ${situacao === 'quebrado' ? 'quebrado' : 'perdido'}`,
             tipo: tipoOcorrencia,
-            // ✅ Status PENDENTE = auditoria pendente de revisão (estoque já foi ajustado)
+            // PENDENTE = aguardando confirmação do Felipe para ajustar estoque
             status: 'PENDENTE',
             motivo: `Gerado automaticamente via devolução do checklist #${item.checklistId}`,
             ...(checklist?.event ? { event: checklist.event } : {}),
@@ -408,9 +400,9 @@ export class ChecklistItemService {
         const mensagens = {
           ok: 'Equipamento devolvido ao estoque.',
           quebrado:
-            'Equipamento registrado como danificado. Estoque ajustado. Ocorrência criada para auditoria.',
+            'Equipamento registrado como danificado. Ocorrência criada — aguardando confirmação do administrador para ajustar estoque.',
           perdido:
-            'Equipamento registrado como perdido. Estoque ajustado. Ocorrência criada para auditoria.',
+            'Equipamento registrado como perdido. Ocorrência criada — aguardando confirmação do administrador para ajustar estoque.',
         };
 
         return { mensagem: mensagens[situacao], item };
