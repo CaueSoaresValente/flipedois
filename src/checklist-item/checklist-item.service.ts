@@ -10,6 +10,7 @@ import { CreateChecklistItemDto } from './dto/create-checklist-item.dto';
 import { Event } from '../event/event.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EquipmentOccurrence } from '../equipment-occurrence/equipment-occurrence.entity';
+import { EquipmentOccurrenceService } from '../equipment-occurrence/equipment-occurrence.service';
 import { StockService } from '../stock/stock.service';
 
 @Injectable()
@@ -35,6 +36,7 @@ export class ChecklistItemService {
     private readonly dataSource: DataSource,
     private readonly auditLogService: AuditLogService,
     private readonly stockService: StockService,
+    private readonly occurrenceService: EquipmentOccurrenceService,
   ) {}
 
   // ==============================
@@ -198,10 +200,6 @@ export class ChecklistItemService {
           );
         }
 
-        // NOTA: O estoque já foi reservado (disponivel → emUso) na liberação do checklist.
-        // A separação apenas registra quantas unidades físicas foram efetivamente separadas.
-        // Não há movimentação de estoque aqui.
-
         const anterior = item.quantidadeSeparada;
         item.quantidadeSeparada += quantidade;
         item.statusSeparacao =
@@ -265,26 +263,35 @@ export class ChecklistItemService {
   }
 
   // ==============================
-  // DEVOLUÇÃO — Nova hierarquia de estoque (Felipe vs Funcionário)
+  // DEVOLUÇÃO — MIXED RETURN (OK + Danificado + Perdido)
   // ==============================
   /**
    * Registra a devolução de um item do checklist.
    *
-   * HIERARQUIA DE ESTOQUE:
+   * NOVO MODELO — MIXED RETURN (OBRIGATÓRIO):
    *
-   * OK:       disponivel += qty, emUso -= qty  ← Ajuste imediato (sem controvérsia)
-   * Quebrado: NÃO altera estoque. Cria ocorrência PENDENTE. Item permanece em emUso.
-   * Perdido:  NÃO altera estoque. Cria ocorrência PENDENTE. Item permanece em emUso.
+   * O funcionário informa PARA CADA ITEM:
+   *   - quantidadeOk: itens em bom estado
+   *   - quantidadeDanificada: itens com defeito
+   *   - quantidadePerdida: itens extraviados
    *
-   * A baixa definitiva do patrimônio (emUso → danificada/perdida, total -= qty)
-   * SOMENTE ocorre quando o Felipe (admin) confirmar a ocorrência na tela de Ocorrências.
+   * REGRA DE VALIDAÇÃO:
+   *   quantidadeOk + quantidadeDanificada + quantidadePerdida <= maxDevolvivel
+   *   quantidadeOk + quantidadeDanificada + quantidadePerdida > 0
    *
-   * Se o Felipe marcar como "Achado" ou "Resolvido", o sistema devolve de emUso → disponivel.
+   * COMPORTAMENTO:
+   *   ✅ OK > 0: disponivel += OK, emUso -= OK (automático, sem aprovação)
+   *   ⚠️ DANIFICADO > 0: cria ocorrência PENDENTE, NÃO muda estoque
+   *   ⚠️ PERDIDO > 0: cria ocorrência PENDENTE, NÃO muda estoque
+   *
+   * Estoque para DANO/PERDA SÓ muda quando Felipe confirma a ocorrência.
    */
   async devolverItem(
     itemId: number,
-    quantidade: number,
-    situacao: 'ok' | 'quebrado' | 'perdido',
+    quantidadeOk: number,
+    quantidadeDanificada: number,
+    quantidadePerdida: number,
+    observacao?: string,
     userId?: number,
     userEmail?: string,
   ) {
@@ -292,82 +299,91 @@ export class ChecklistItemService {
       try {
         const item = await manager.findOne(ChecklistItem, {
           where: { id: itemId },
-          relations: ['checklist'],
+          relations: ['checklist', 'checklist.event'],
         });
 
         if (!item) throw new BadRequestException('Item não encontrado.');
 
-        if (quantidade <= 0)
-          throw new BadRequestException('Quantidade inválida.');
+        const totalReturn = quantidadeOk + quantidadeDanificada + quantidadePerdida;
+
+        if (totalReturn <= 0) {
+          throw new BadRequestException(
+            'Informe pelo menos uma quantidade para devolver.',
+          );
+        }
 
         const maxDevolvivel =
           item.quantidadeSeparada - item.quantidadeDevolvida;
-        if (quantidade > maxDevolvivel) {
+        if (totalReturn > maxDevolvivel) {
           throw new BadRequestException(
-            `Quantidade excede o máximo devolvível. Máximo: ${maxDevolvivel}.`,
+            `Quantidade total (${totalReturn}) excede o máximo devolvível (${maxDevolvivel}).`,
           );
         }
 
         const anterior = item.quantidadeDevolvida;
+        item.quantidadeDevolvida += totalReturn;
+
+        if (observacao) {
+          item.observacaoDevolucao = observacao;
+        }
 
         // ============================================================
-        // AJUSTE DE ESTOQUE — Apenas para devolução OK
-        // Quebrado/Perdido: estoque NÃO é alterado aqui (permanece em emUso)
-        // A baixa definitiva é feita pelo Felipe na tela de Ocorrências
+        // 1. OK — Automático: atualiza estoque imediatamente
         // ============================================================
-        if (situacao === 'ok') {
-          item.quantidadeOk = (item.quantidadeOk || 0) + quantidade;
-          // OK: devolve ao disponível, sai do emUso
+        if (quantidadeOk > 0) {
           await this.stockService.registrarDevolucaoOk(
             manager,
             item.equipmentId,
-            quantidade,
+            quantidadeOk,
           );
-        } else if (situacao === 'quebrado') {
-          item.quantidadeQuebrada = (item.quantidadeQuebrada || 0) + quantidade;
-          // ❌ NÃO ajusta estoque — permanece em emUso até confirmação do admin
-        } else if (situacao === 'perdido') {
-          item.quantidadePerdida = (item.quantidadePerdida || 0) + quantidade;
-          // ❌ NÃO ajusta estoque — permanece em emUso até confirmação do admin
         }
-
-        item.quantidadeDevolvida += quantidade;
 
         // ============================================================
-        // OCORRÊNCIA — Criada para Quebrado/Perdido (sem impacto no estoque)
-        // O admin deve confirmar a baixa para que o estoque seja efetivamente ajustado.
+        // 2. DANIFICADO — Cria ocorrência PENDENTE, NÃO muda estoque
         // ============================================================
-        if (situacao !== 'ok') {
-          const tipoOcorrencia = situacao === 'quebrado' ? 'DANO' : 'PERDA';
-          const checklist = await manager.findOne(Checklist, {
-            where: { id: item.checklistId },
-            relations: ['event'],
-          });
-
-          const occurrence = manager.create(EquipmentOccurrence, {
-            equipment: { id: item.equipmentId } as Equipment,
-            quantidade,
-            descricao: `Devolução: "${item.nomeSnapshot}" registrado como ${situacao === 'quebrado' ? 'quebrado' : 'perdido'}`,
-            tipo: tipoOcorrencia,
-            // PENDENTE = aguardando confirmação do Felipe para ajustar estoque
-            status: 'PENDENTE',
-            motivo: `Gerado automaticamente via devolução do checklist #${item.checklistId}`,
-            ...(checklist?.event ? { event: checklist.event } : {}),
-          });
-          await manager.save(EquipmentOccurrence, occurrence);
+        if (quantidadeDanificada > 0) {
+          await this.occurrenceService.registrarTx(
+            manager,
+            item.checklist?.event?.id ?? null,
+            item.equipmentId,
+            quantidadeDanificada,
+            `Devolução: "${item.nomeSnapshot}" classificado como danificado`,
+            'DANO',
+            `Devolução do checklist #${item.checklistId}`,
+            item.id,
+          );
         }
 
-        // Define status de devolução
-        if (item.quantidadeDevolvida === item.quantidadeSeparada) {
-          if (item.quantidadePerdida > 0) item.statusDevolucao = 'perdido';
-          else if (item.quantidadeQuebrada > 0)
-            item.statusDevolucao = 'quebrado';
-          else item.statusDevolucao = 'devolvido';
-        } else {
-          item.statusDevolucao = 'faltando';
+        // ============================================================
+        // 3. PERDIDO — Cria ocorrência PENDENTE, NÃO muda estoque
+        // ============================================================
+        if (quantidadePerdida > 0) {
+          await this.occurrenceService.registrarTx(
+            manager,
+            item.checklist?.event?.id ?? null,
+            item.equipmentId,
+            quantidadePerdida,
+            `Devolução: "${item.nomeSnapshot}" classificado como perdido`,
+            'PERDA',
+            `Devolução do checklist #${item.checklistId}`,
+            item.id,
+          );
         }
 
+        // Sync checklist fields from occurrences
+        // First save the base item with updated quantidadeDevolvida
         await manager.save(ChecklistItem, item);
+
+        // Now sync OK/Qb/Pd from occurrences
+        await this.occurrenceService.syncChecklistItemFromOccurrences(
+          manager,
+          item.id,
+        );
+
+        // Re-read item after sync
+        const updatedItem = await manager.findOne(ChecklistItem, {
+          where: { id: itemId },
+        });
 
         await manager.save(ChecklistItemHistory, {
           checklistItemId: item.id,
@@ -377,7 +393,10 @@ export class ChecklistItemService {
           usuario: userEmail ?? 'sistema',
         });
 
-        await this.atualizarStatusChecklistTx(manager, item.checklistId);
+        const parts: string[] = [];
+        if (quantidadeOk > 0) parts.push(`${quantidadeOk}x OK`);
+        if (quantidadeDanificada > 0) parts.push(`${quantidadeDanificada}x Danificado`);
+        if (quantidadePerdida > 0) parts.push(`${quantidadePerdida}x Perdido`);
 
         await this.auditLogService.log(
           userId ?? null,
@@ -387,25 +406,25 @@ export class ChecklistItemService {
           item.id,
           {
             equipmentNome: item.nomeSnapshot,
-            situacao,
+            observacao: observacao ?? null,
+            quantidadeOk,
+            quantidadeDanificada,
+            quantidadePerdida,
             quantidadeAnterior: anterior,
             quantidadeNova: item.quantidadeDevolvida,
-            quantidadeOk: item.quantidadeOk,
-            quantidadeQuebrada: item.quantidadeQuebrada,
-            quantidadePerdida: item.quantidadePerdida,
           },
-          `Devolvido ${quantidade}x "${item.nomeSnapshot}" (${situacao})`,
+          `Devolvido "${item.nomeSnapshot}": ${parts.join(', ')}`,
         );
 
-        const mensagens = {
-          ok: 'Equipamento devolvido ao estoque.',
-          quebrado:
-            'Equipamento registrado como danificado. Ocorrência criada — aguardando confirmação do administrador para ajustar estoque.',
-          perdido:
-            'Equipamento registrado como perdido. Ocorrência criada — aguardando confirmação do administrador para ajustar estoque.',
-        };
+        const mensagens: string[] = [];
+        if (quantidadeOk > 0) mensagens.push(`${quantidadeOk}x OK (estoque atualizado)`);
+        if (quantidadeDanificada > 0) mensagens.push(`${quantidadeDanificada}x Danificado (aguardando confirmação)`);
+        if (quantidadePerdida > 0) mensagens.push(`${quantidadePerdida}x Perdido (aguardando confirmação)`);
 
-        return { mensagem: mensagens[situacao], item };
+        return {
+          mensagem: `Devolução registrada: ${mensagens.join(', ')}.`,
+          item: updatedItem,
+        };
       } catch (error) {
         if (error instanceof BadRequestException) throw error;
         console.error('[DEVOLVER] Erro inesperado:', error);
@@ -446,9 +465,13 @@ export class ChecklistItemService {
         ['devolvido', 'quebrado', 'perdido'].includes(i.statusDevolucao),
     );
 
+    const algumAguardando = items.some(
+      (i: ChecklistItem) => i.statusDevolucao === 'aguardando_confirmacao',
+    );
+
     if (todosFinalizados) {
       checklist.status = 'concluido';
-    } else if (algumDevolvido) {
+    } else if (algumAguardando || algumDevolvido) {
       checklist.status = 'pendente_devolucao';
     } else if (todosSeparados) {
       checklist.status = 'em_evento';
@@ -460,18 +483,8 @@ export class ChecklistItemService {
   }
 
   // ==============================
-  // ATUALIZAR QUANTIDADE — rascunho ou liberado/em_evento/pendente_devolucao
+  // ATUALIZAR QUANTIDADE — rascunho ou liberado/em_evento
   // ==============================
-  /**
-   * Atualiza a quantidade planejada de um item.
-   *
-   * Rascunho: Apenas valida disponibilidade (sem ajuste de estoque).
-   * Liberado/em_evento/pendente_devolucao: Calcula delta e ajusta estoque.
-   *   delta > 0: reservarEstoque (valida disponível)
-   *   delta < 0: liberarReserva
-   *
-   * Validação adicional: nova quantidade não pode ser menor que já separado.
-   */
   async updateQuantidade(
     itemId: number,
     quantidade: number,
@@ -494,10 +507,15 @@ export class ChecklistItemService {
 
       const status = item.checklist.status;
 
+      // 🔴 BLOQUEIO: quantidade planejada é IMUTÁVEL durante fase de devolução
+      if (['pendente_devolucao', 'concluido'].includes(status)) {
+        throw new BadRequestException(
+          'Não é possível alterar quantidade planejada durante a fase de devolução.',
+        );
+      }
+
       if (
-        !['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(
-          status,
-        )
+        !['rascunho', 'liberado', 'em_evento'].includes(status)
       ) {
         throw new BadRequestException(
           `Não é possível alterar quantidade de item em checklist com status "${status}".`,
@@ -700,8 +718,6 @@ export class ChecklistItemService {
 
         const anterior = item.quantidadeSeparada;
 
-        // NOTA: A separação não moveu estoque (apenas tracking).
-        // O estoque permanece em emUso até: devolução, ou cancelamento do checklist.
         item.quantidadeSeparada -= quantidade;
         item.statusSeparacao =
           item.quantidadeSeparada === item.quantidadePlanejada
@@ -745,187 +761,94 @@ export class ChecklistItemService {
   }
 
   // ==============================
-  // EDITAR DEVOLUÇÃO — Permite corrigir a composição ok/quebrado/perdido
+  // APROVAR TODAS AS OCORRÊNCIAS PENDENTES DE UM CHECKLIST
   // ==============================
   /**
-   * Permite ao admin editar a distribuição de uma devolução já feita.
-   *
-   * Se dano ou perda foi REMOVIDO:
-   *   - Reverte o write-off (cancelarDano/cancelarPerda)
-   *   - Registra como devolução OK (registrarDevolucaoOk)
-   *   - Anula a ocorrência vinculada
-   *
-   * Se dano ou perda foi ADICIONADO:
-   *   - Reverte a devolução OK (disponivel -= qty para internos)
-   *   - Registra como danificado/perdido
-   *   - Cria nova ocorrência
-   *
-   * O total devolvido permanece o mesmo.
+   * Admin confirma (BAIXA) todas as ocorrências pendentes de um checklist.
+   * Stock changes happen INSIDE confirmarBaixa() via the occurrence service.
    */
-  async editarDevolucao(
-    itemId: number,
-    novoOk: number,
-    novoQuebrado: number,
-    novoPerdido: number,
+  async aprovarTodosPendentes(
+    checklistId: number,
     userId?: number,
     userEmail?: string,
   ) {
     return this.dataSource.transaction(async (manager) => {
-      const item = await manager.findOne(ChecklistItem, {
-        where: { id: itemId },
-        relations: ['checklist', 'checklist.event'],
+      // Find all checklist items for this checklist
+      const items = await manager.find(ChecklistItem, {
+        where: { checklistId },
       });
 
-      if (!item) throw new BadRequestException('Item não encontrado.');
+      if (items.length === 0) {
+        throw new BadRequestException('Nenhum item neste checklist.');
+      }
 
-      const status = item.checklist.status;
-      if (!['em_evento', 'pendente_devolucao', 'concluido'].includes(status)) {
+      const itemIds = items.map((i) => i.id);
+
+      // Find all PENDENTE occurrences linked to these items
+      const pendentes = await manager
+        .createQueryBuilder(EquipmentOccurrence, 'occ')
+        .leftJoinAndSelect('occ.equipment', 'equipment')
+        .where('occ.checklistItemId IN (:...itemIds)', { itemIds })
+        .andWhere('occ.status = :status', { status: 'PENDENTE' })
+        .getMany();
+
+      if (pendentes.length === 0) {
         throw new BadRequestException(
-          `Não é possível editar devolução de checklist com status "${status}".`,
+          'Nenhuma ocorrência pendente de aprovação neste checklist.',
         );
       }
 
-      const totalAnterior =
-        (item.quantidadeOk || 0) +
-        (item.quantidadeQuebrada || 0) +
-        (item.quantidadePerdida || 0);
-      const totalNovo = novoOk + novoQuebrado + novoPerdido;
+      const resultados: { occurrenceId: number; tipo: string; quantidade: number }[] = [];
 
-      if (totalNovo !== totalAnterior) {
-        throw new BadRequestException(
-          `O total devolvido deve permanecer ${totalAnterior}. Recebido: ${totalNovo}.`,
-        );
-      }
+      for (const occ of pendentes) {
+        const { tipo, quantidade, equipment } = occ;
 
-      const deltaOk = novoOk - (item.quantidadeOk || 0);
-      const deltaQuebrado = novoQuebrado - (item.quantidadeQuebrada || 0);
-      const deltaPerdido = novoPerdido - (item.quantidadePerdida || 0);
-
-      // Se NÃO mudou nada, retorna direto
-      if (deltaOk === 0 && deltaQuebrado === 0 && deltaPerdido === 0) {
-        return { mensagem: 'Nenhuma alteração detectada.', item };
-      }
-
-      // === REVERTER dano removido ===
-      if (deltaQuebrado < 0) {
-        const qty = Math.abs(deltaQuebrado);
-        // Reverte o write-off de dano e devolve como OK
-        await this.stockService.cancelarDano(manager, item.equipmentId, qty);
-        // Agora registra como devolução OK (disponivel += qty para internos)
-        // Mas NÃO subtrai emUso extra — o emUso já havia sido decrementado na devolução original.
-        // cancelarDano restaura: danificada -= qty, disponivel += qty, total += qty
-        // Não precisamos chamar registrarDevolucaoOk porque o item já saiu de emUso.
-      }
-
-      // === REVERTER perda removida ===
-      if (deltaPerdido < 0) {
-        const qty = Math.abs(deltaPerdido);
-        await this.stockService.cancelarPerda(manager, item.equipmentId, qty);
-      }
-
-      // === ADICIONAR novo dano ===
-      if (deltaQuebrado > 0) {
-        // Precisa "re-damaged": disponivel -= qty (onde OK voltou), danificada += qty, total -= qty
-        // O item já não está em emUso, então precisamos tirar do disponível
-        await this.stockService.registrarDanoManual(
-          manager,
-          item.equipmentId,
-          deltaQuebrado,
-        );
-      }
-
-      // === ADICIONAR nova perda ===
-      if (deltaPerdido > 0) {
-        await this.stockService.registrarPerdaManual(
-          manager,
-          item.equipmentId,
-          deltaPerdido,
-        );
-      }
-
-      // === ANULAR / REMOVER OCORRÊNCIAS (dano/perda removidos por completo) ===
-      if ((deltaQuebrado < 0 && novoQuebrado === 0) || (deltaPerdido < 0 && novoPerdido === 0)) {
-        const occurrences = await manager.find(EquipmentOccurrence, {
-          where: {
-            equipment: { id: item.equipmentId },
-            status: 'PENDENTE' as any,
-          },
-          relations: ['equipment'],
-          order: { createdAt: 'DESC' },
-        });
-
-        for (const occ of occurrences) {
-          const isDanoRemovido = deltaQuebrado < 0 && novoQuebrado === 0 && occ.tipo === 'DANO';
-          const isPerdaRemovida = deltaPerdido < 0 && novoPerdido === 0 && occ.tipo === 'PERDA';
-
-          if (isDanoRemovido || isPerdaRemovida) {
-            // Deleta a ocorrência vinculada a esta devolução específica
-            await manager.remove(EquipmentOccurrence, occ);
-          }
+        if (tipo === 'DANO') {
+          await this.stockService.registrarDevolucaoDanificado(
+            manager,
+            equipment.id,
+            quantidade,
+          );
+        } else if (tipo === 'PERDA') {
+          await this.stockService.registrarDevolucaoPerdido(
+            manager,
+            equipment.id,
+            quantidade,
+          );
         }
-      }
 
-      // === CRIAR OCORRÊNCIAS para novo dano/perda adicionado ===
-      if (deltaQuebrado > 0) {
-        const occurrence = manager.create(EquipmentOccurrence, {
-          equipment: { id: item.equipmentId } as Equipment,
-          quantidade: deltaQuebrado,
-          descricao: `Edição de devolução: "${item.nomeSnapshot}" corrigido para danificado`,
-          tipo: 'DANO',
-          status: 'PENDENTE',
-          motivo: `Correção de devolução do checklist #${item.checklistId}`,
-          ...(item.checklist?.event ? { event: item.checklist.event } : {}),
+        occ.status = 'BAIXADO';
+        await manager.save(EquipmentOccurrence, occ);
+
+        resultados.push({
+          occurrenceId: occ.id,
+          tipo: occ.tipo,
+          quantidade: occ.quantidade,
         });
-        await manager.save(EquipmentOccurrence, occurrence);
-      }
-      if (deltaPerdido > 0) {
-        const occurrence = manager.create(EquipmentOccurrence, {
-          equipment: { id: item.equipmentId } as Equipment,
-          quantidade: deltaPerdido,
-          descricao: `Edição de devolução: "${item.nomeSnapshot}" corrigido para perdido`,
-          tipo: 'PERDA',
-          status: 'PENDENTE',
-          motivo: `Correção de devolução do checklist #${item.checklistId}`,
-          ...(item.checklist?.event ? { event: item.checklist.event } : {}),
-        });
-        await manager.save(EquipmentOccurrence, occurrence);
       }
 
-      // Atualiza quantidades no item
-      item.quantidadeOk = novoOk;
-      item.quantidadeQuebrada = novoQuebrado;
-      item.quantidadePerdida = novoPerdido;
-
-      // Recalcular status devolução
-      if (novoPerdido > 0) item.statusDevolucao = 'perdido';
-      else if (novoQuebrado > 0) item.statusDevolucao = 'quebrado';
-      else item.statusDevolucao = 'devolvido';
-
-      await manager.save(ChecklistItem, item);
-
-      await this.atualizarStatusChecklistTx(manager, item.checklistId);
+      // Sync all affected checklist items
+      const affectedItemIds = [...new Set(pendentes.map((o) => o.checklistItemId).filter(Boolean))];
+      for (const itemId of affectedItemIds) {
+        await this.occurrenceService.syncChecklistItemFromOccurrences(
+          manager,
+          itemId!,
+        );
+      }
 
       await this.auditLogService.log(
         userId ?? null,
         userEmail ?? null,
-        'EDITAR_DEVOLUCAO',
-        'checklist_item',
-        item.id,
-        {
-          deltaOk,
-          deltaQuebrado,
-          deltaPerdido,
-          novoOk,
-          novoQuebrado,
-          novoPerdido,
-        },
-        `Devolução editada para "${item.nomeSnapshot}": OK=${novoOk}, Qb=${novoQuebrado}, Pd=${novoPerdido}`,
+        'APROVAR_LOTE',
+        'checklist',
+        checklistId,
+        { ocorrencias: resultados.length },
+        `Aprovação em lote: ${resultados.length} ocorrência(s) confirmadas no checklist #${checklistId}`,
       );
 
       return {
-        mensagem:
-          'Devolução editada com sucesso. Estoque e ocorrências atualizados.',
-        item,
+        mensagem: `${resultados.length} ocorrência(s) confirmada(s) com sucesso.`,
+        resultados,
       };
     });
   }

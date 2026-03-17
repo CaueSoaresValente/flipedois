@@ -14,7 +14,9 @@ export type StatusDevolucao =
   | 'faltando'
   | 'devolvido'
   | 'quebrado'
-  | 'perdido';
+  | 'perdido'
+  | 'pendente_revisao'
+  | 'aguardando_confirmacao';
 
 @Index(['checklistId', 'equipmentId'], { unique: true })
 @Entity('checklist_item')
@@ -62,6 +64,9 @@ export class ChecklistItem {
 
   @Column({ default: 'pendente' })
   statusDevolucao: StatusDevolucao;
+
+  @Column({ nullable: true })
+  observacaoDevolucao?: string;
 
   @CreateDateColumn()
   createdAt: Date;

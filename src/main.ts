@@ -6,6 +6,12 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // 🔴 CRITICAL: UTF-8 encoding fix
+  app.use((req, res, next) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    next();
+  });
+
   // CORS para frontend se comunicar com backend
   app.enableCors({
     origin: ['http://localhost:5173', 'http://localhost:3001'],

@@ -26,6 +26,11 @@ import { DashboardModule } from './dashboard/dashboard.module';
       username: 'postgres',
       password: 'postgres',
       database: 'eventos',
+      extra: {
+        charset: 'utf8',
+        clientEncoding: 'utf8',
+        client_encoding: 'UTF8',
+      },
       autoLoadEntities: true,
       synchronize: true,
     }),

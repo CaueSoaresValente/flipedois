@@ -155,10 +155,25 @@ export class EventService {
     if (!event) throw new BadRequestException('Evento não encontrado.');
     if (event.status === 'finalizado')
       throw new BadRequestException('Evento já está finalizado.');
-    if (event.status === 'cancelado')
-      throw new BadRequestException(
-        'Evento cancelado não pode ser finalizado.',
+    if (event.status === 'cancelado') {
+      // 🔴 Evento cancelado PODE ser finalizado (marca como completo, sem mais edições)
+      event.status = 'finalizado';
+      event.finalizadoPor = userEmail ?? undefined;
+      event.finalizadoEm = new Date();
+      const saved = await this.repo.save(event);
+
+      await this.auditLogService.log(
+        userId ?? null,
+        userEmail ?? null,
+        'FINALIZAR',
+        'event',
+        id,
+        { status: 'cancelado → finalizado' },
+        `Evento cancelado "${event.nome}" finalizado`,
       );
+
+      return saved;
+    }
 
     const checklistsAtivos = (event.checklists ?? []).filter(
       (cl) => !['concluido', 'cancelado'].includes(cl.status),
@@ -273,6 +288,10 @@ export class EventService {
       event.motivoCancelamento = motivo;
       event.canceladoPor = userEmail ?? undefined;
       event.canceladoEm = new Date();
+      
+      // 🔴 CRITICAL RULE: Cancelled event = Finalized event
+      event.finalizadoPor = userEmail ?? undefined;
+      event.finalizadoEm = new Date();
 
       const saved = await manager.save(Event, event);
 
@@ -302,7 +321,7 @@ export class EventService {
     if (event.status === 'finalizado')
       throw new BadRequestException('Não é possível editar evento finalizado.');
     if (event.status === 'cancelado')
-      throw new BadRequestException('Não é possível editar evento cancelado.');
+      throw new BadRequestException('Não é possível editar evento cancelado (cancelados são automaticamente finalizados).');
 
     if (dto.dataInicio !== undefined || dto.dataFim !== undefined) {
       const inicio = dto.dataInicio ?? event.dataInicio.toISOString();
@@ -410,10 +429,11 @@ export class EventService {
 
       for (const item of items) {
         // Busca equipamento atual para snapshot e validação de estoque
-        const equipmentRepo = this.checklistItemRepo.manager.getRepository(Equipment);
-        const equipment = await equipmentRepo.findOne(
-          { where: { id: item.equipmentId } },
-        );
+        const equipmentRepo =
+          this.checklistItemRepo.manager.getRepository(Equipment);
+        const equipment = await equipmentRepo.findOne({
+          where: { id: item.equipmentId },
+        });
 
         const nomeSnapshot = equipment?.nome ?? item.nomeSnapshot;
         const descricaoSnapshot =

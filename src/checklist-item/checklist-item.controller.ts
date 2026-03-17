@@ -17,7 +17,7 @@ import { DevolverItemDto } from './dto/devolver-item.dto';
 import { UpdateChecklistItemDto } from './dto/update-checklist-item.dto';
 import { TrocarEquipmentDto } from './dto/trocar-equipment.dto';
 import { CancelarSeparacaoDto } from './dto/cancelar-separacao.dto';
-import { EditarDevolucaoDto } from './dto/editar-devolucao.dto';
+import { AprovarTodosDto } from './dto/revisar-devolucao-lote.dto';
 
 @Controller('checklist-item')
 export class ChecklistItemController {
@@ -53,8 +53,10 @@ export class ChecklistItemController {
     );
   }
 
-  // Both ADMIN and FUNCIONARIO can devolver — admin may need to correct returns
-  @Roles('FUNCIONARIO', 'ADMIN')
+  // 🔴 MIXED RETURN: Employee inputs OK + Damaged + Lost quantities per item
+  // OK → stock updated immediately (emUso → disponivel)
+  // DAMAGED/LOST → occurrence created (PENDENTE), stock NOT changed
+  @Roles('FUNCIONARIO')
   @Patch(':id/devolver')
   devolver(
     @Param('id', ParseIntPipe) id: number,
@@ -63,33 +65,28 @@ export class ChecklistItemController {
   ) {
     return this.service.devolverItem(
       id,
-      dto.quantidade,
-      dto.situacao,
+      dto.quantidadeOk,
+      dto.quantidadeDanificada,
+      dto.quantidadePerdida,
+      dto.observacao,
       req.user.sub,
       req.user.email,
     );
   }
 
-  // Admin/FUNCIONARIO podem corrigir composição da devolução (ok/quebrado/perdido)
-  // (ex.: funcionário remove marcação de dano/perda → anula ocorrência e devolve ao saldo)
-  @Roles('FUNCIONARIO', 'ADMIN')
-  @Patch(':id/editar-devolucao')
-  editarDevolucao(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: EditarDevolucaoDto,
-    @Req() req: any,
-  ) {
-    return this.service.editarDevolucao(
-      id,
-      dto.ok,
-      dto.quebrado,
-      dto.perdido,
+  // 🔴 ADMIN ONLY: Batch approve ALL pending occurrences in a checklist
+  // Stock changes happen inside confirmarBaixa() via the occurrence service
+  @Roles('ADMIN')
+  @Post('aprovar-todos')
+  aprovarTodos(@Body() dto: AprovarTodosDto, @Req() req: any) {
+    return this.service.aprovarTodosPendentes(
+      dto.checklistId,
       req.user.sub,
       req.user.email,
     );
   }
 
-  // Admin updates planned quantity (rascunho/liberado/em_evento/pendente_devolucao)
+  // Admin updates planned quantity (rascunho/liberado/em_evento ONLY — BLOCKED during devolução)
   @Roles('ADMIN')
   @Patch(':id')
   updateQuantidade(

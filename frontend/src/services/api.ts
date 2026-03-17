@@ -2,6 +2,10 @@ import axios from 'axios';
 
 export const api = axios.create({
   baseURL: 'http://localhost:3000',
+  headers: {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Accept': 'application/json; charset=utf-8',
+  },
 });
 
 api.interceptors.request.use((config) => {
@@ -77,9 +81,13 @@ export const checklistItemApi = {
     api.patch(`/checklist-item/${id}/separar`, { quantidadeSeparada }),
   devolver: (
     id: number,
-    quantidade: number,
-    situacao: 'ok' | 'quebrado' | 'perdido'
-  ) => api.patch(`/checklist-item/${id}/devolver`, { quantidade, situacao }),
+    quantidadeOk: number,
+    quantidadeDanificada: number,
+    quantidadePerdida: number,
+    observacao?: string
+  ) => api.patch(`/checklist-item/${id}/devolver`, { quantidadeOk, quantidadeDanificada, quantidadePerdida, observacao }),
+  aprovarTodos: (checklistId: number) =>
+    api.post('/checklist-item/aprovar-todos', { checklistId }),
   update: (id: number, quantidadePlanejada: number) =>
     api.patch(`/checklist-item/${id}`, { quantidadePlanejada }),
   remove: (id: number) => api.delete(`/checklist-item/${id}`),
@@ -94,8 +102,6 @@ export const checklistItemApi = {
     }),
   cancelarSeparacao: (id: number, quantidade: number) =>
     api.patch(`/checklist-item/${id}/cancelar-separacao`, { quantidade }),
-  editarDevolucao: (id: number, ok: number, quebrado: number, perdido: number) =>
-    api.patch(`/checklist-item/${id}/editar-devolucao`, { ok, quebrado, perdido }),
 };
 
 // =====================

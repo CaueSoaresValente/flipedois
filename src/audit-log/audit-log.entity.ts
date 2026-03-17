@@ -22,7 +22,10 @@ export type AuditAction =
   | 'OCORRENCIA_CONFIRMAR'
   | 'OCORRENCIA_CANCELAR'
   | 'OCORRENCIA_AUTO'
-  | 'EDITAR_DEVOLUCAO';
+  | 'EDITAR_DEVOLUCAO'
+  | 'REVISAR_DEVOLUCAO'
+  | 'APROVAR_LOTE'
+  | 'REVISAR_LOTE';
 
 @Entity('audit_log')
 export class AuditLog {

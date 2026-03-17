@@ -28,6 +28,7 @@ interface ChecklistItemData {
   statusSeparacao: string;
   statusDevolucao: string;
   setor: string;
+  observacaoDevolucao?: string;
 }
 
 interface ChecklistData {
@@ -113,13 +114,15 @@ export default function Eventos() {
   const [separateModal, setSeparateModal] = useState<ChecklistItemData | null>(null);
   const [separateQty, setSeparateQty] = useState(1);
 
-  // Return modal
+  // Return modal — mixed return (OK + Damaged + Lost per item)
   const [returnModal, setReturnModal] = useState<ChecklistItemData | null>(null);
-  const [returnConditions, setReturnConditions] = useState<{ ok: number; quebrado: number; perdido: number }>({ ok: 0, quebrado: 0, perdido: 0 });
+  const [returnOk, setReturnOk] = useState(0);
+  const [returnDanificado, setReturnDanificado] = useState(0);
+  const [returnPerdido, setReturnPerdido] = useState(0);
+  const [returnObservation, setReturnObservation] = useState('');
 
-  // Edit return composition
-  const [editReturnModal, setEditReturnModal] = useState<ChecklistItemData | null>(null);
-  const [editReturnConditions, setEditReturnConditions] = useState<{ ok: number; quebrado: number; perdido: number }>({ ok: 0, quebrado: 0, perdido: 0 });
+  // Batch approval confirmation
+  const [confirmBatchApproval, setConfirmBatchApproval] = useState(false);
 
   // Confirm remove item
   const [confirmRemoveItem, setConfirmRemoveItem] = useState<number | null>(null);
@@ -372,55 +375,43 @@ export default function Eventos() {
     }
   }
 
-  // Return handler
+  // Return handler — MIXED: OK + Damaged + Lost per item
   async function handleDevolver() {
     if (!returnModal) return;
-    const totalReturn = returnConditions.ok + returnConditions.quebrado + returnConditions.perdido;
-    if (totalReturn === 0) {
+    const totalReturn = returnOk + returnDanificado + returnPerdido;
+    if (totalReturn <= 0) {
       addToast('error', 'Informe pelo menos uma quantidade para devolver');
       return;
     }
     const remaining = returnModal.quantidadeSeparada - returnModal.quantidadeDevolvida;
     if (totalReturn > remaining) {
-      addToast('error', `Total (${totalReturn}) excede o restante (${remaining})`);
+      addToast('error', `Quantidade total (${totalReturn}) excede o restante (${remaining})`);
       return;
     }
     try {
-      for (const [situacao, qty] of Object.entries(returnConditions) as ['ok' | 'quebrado' | 'perdido', number][]) {
-        if (qty > 0) {
-          await checklistItemApi.devolver(returnModal.id, qty, situacao);
-        }
-      }
-      addToast('success', 'Devolucao registrada com sucesso');
+      const res = await checklistItemApi.devolver(returnModal.id, returnOk, returnDanificado, returnPerdido, returnObservation || undefined);
+      addToast('success', res.data?.mensagem || 'Devolução registrada.');
       setReturnModal(null);
-      setReturnConditions({ ok: 0, quebrado: 0, perdido: 0 });
+      setReturnOk(0);
+      setReturnDanificado(0);
+      setReturnPerdido(0);
+      setReturnObservation('');
       await refreshChecklistModal();
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao devolver');
     }
   }
 
-  // Edit return composition handler
-  async function handleEditarDevolucao() {
-    if (!editReturnModal) return;
-    const totalAnterior = (editReturnModal.quantidadeOk ?? 0) + (editReturnModal.quantidadeQuebrada ?? 0) + (editReturnModal.quantidadePerdida ?? 0);
-    const totalNovo = editReturnConditions.ok + editReturnConditions.quebrado + editReturnConditions.perdido;
-    if (totalNovo !== totalAnterior) {
-      addToast('error', `O total devolvido deve permanecer ${totalAnterior}.`);
-      return;
-    }
+  // Batch approve all pending occurrences
+  async function handleAprovarTodos() {
+    if (!checklistModal) return;
     try {
-      await checklistItemApi.editarDevolucao(
-        editReturnModal.id,
-        editReturnConditions.ok,
-        editReturnConditions.quebrado,
-        editReturnConditions.perdido,
-      );
-      addToast('success', 'Devolucao editada (estoque/ocorrencias atualizados)');
-      setEditReturnModal(null);
+      const res = await checklistItemApi.aprovarTodos(checklistModal.id);
+      addToast('success', res.data?.mensagem || 'Ocorrências confirmadas com sucesso.');
+      setConfirmBatchApproval(false);
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao editar devolucao');
+      addToast('error', err.response?.data?.message || 'Erro ao aprovar em lote');
     }
   }
 
@@ -439,8 +430,13 @@ export default function Eventos() {
 
   // Role-based checklist permissions
   const canSeparate = !isAdmin && checklistModal?.status === 'liberado';
-  const canReturn = ['em_evento', 'pendente_devolucao', 'concluido'].includes(checklistModal?.status ?? '');
-  const canEditPlanned = isAdmin && ['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '') && checklistModal?.status !== 'cancelado';
+  // 🔴 Employee can return items with mixed selection (OK/Danificado/Perdido)
+  const canEmployeeReturn = !isAdmin && ['em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
+  // 🔴 Planned quantity is IMMUTABLE during return phase
+  const canEditPlanned = isAdmin && ['rascunho', 'liberado', 'em_evento'].includes(checklistModal?.status ?? '') && checklistModal?.status !== 'cancelado';
+
+  // Count pending items for batch approval panel
+  const pendingApprovalItems = (checklistModal?.items ?? []).filter((i) => i.statusDevolucao === 'aguardando_confirmacao');
 
   // Return progress
   const totalSeparados = (checklistModal?.items ?? []).reduce((s, i) => s + i.quantidadeSeparada, 0);
@@ -625,6 +621,8 @@ export default function Eventos() {
   function canFinalizar(ev: EventItem): boolean {
     if (!isAdmin) return false;
     if (ev.status === 'finalizado') return false;
+    // 🔴 Cancelled events CAN be finalized
+    if (ev.status === 'cancelado') return true;
     if (!ev.checklists?.length) return false;
     return ev.checklists.every((cl) => ['concluido', 'cancelado'].includes(cl.status));
   }
@@ -1200,7 +1198,7 @@ export default function Eventos() {
                   <h4 className={`text-sm font-semibold ${
                     pendingReturnItems.length > 0 ? 'text-amber-800 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'
                   }`}>
-                    <PackageCheck size={14} className="inline mr-1" />Progresso de Devolucao
+                    <PackageCheck size={14} className="inline mr-1" />Progresso de Devolução
                   </h4>
                   <span className={`text-sm font-bold ${
                     pendingReturnItems.length > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'
@@ -1217,15 +1215,150 @@ export default function Eventos() {
               </div>
             )}
 
-            {/* Separation progress for employee */}
-            {!isAdmin && checklistModal.status === 'liberado' && pendingItems.length > 0 && (
-              <div className="rounded-xl border border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20 p-4">
-                <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-1.5 flex items-center gap-1.5">
-                  <PackageCheck size={14} /> Itens a Separar
-                </h4>
-                <p className="text-xs text-blue-600 dark:text-blue-400">
-                  {(checklistModal.items ?? []).filter(i => i.quantidadeSeparada >= i.quantidadePlanejada).length} / {(checklistModal.items ?? []).length} itens completamente separados
-                </p>
+            {/* Separation progress for employee — Enhanced UI */}
+            {!isAdmin && checklistModal.status === 'liberado' && (
+              <div className="space-y-4">
+                {/* Progress bar and stats */}
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                      <PackageCheck size={20} className="text-indigo-500" />
+                      Progresso de Separação
+                    </h4>
+                    <span className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                      {(checklistModal.items ?? []).filter(i => i.quantidadeSeparada >= i.quantidadePlanejada).length} / {(checklistModal.items ?? []).length}
+                    </span>
+                  </div>
+
+                  {/* Big colored progress bar */}
+                  <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-4 mb-4">
+                    <div
+                      className="h-4 rounded-full transition-all duration-700 bg-gradient-to-r from-indigo-500 to-purple-600"
+                      style={{
+                        width: `${(checklistModal.items ?? []).length > 0
+                          ? ((checklistModal.items ?? []).filter(i => i.quantidadeSeparada >= i.quantidadePlanejada).length / (checklistModal.items ?? []).length) * 100
+                          : 0}%`
+                      }}
+                    />
+                  </div>
+
+                  {/* Missing items section */}
+                  {pendingItems.length > 0 && (
+                    <div className="rounded-xl border-2 border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 p-4">
+                      <h5 className="text-sm font-bold text-red-800 dark:text-red-300 mb-3 flex items-center gap-2">
+                        <AlertCircle size={16} />
+                        Equipamentos faltando:
+                      </h5>
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {pendingItems.map((item) => {
+                          const missing = item.quantidadePlanejada - item.quantidadeSeparada;
+                          return (
+                            <div key={item.id} className="flex items-center justify-between bg-white dark:bg-slate-800 rounded-lg p-3 border border-red-200 dark:border-red-700">
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-slate-800 dark:text-white">{item.nomeSnapshot}</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Setor: {item.setor}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-sm font-bold text-red-600 dark:text-red-400">Faltam {missing} unid.</p>
+                                <p className="text-xs text-slate-500">{item.quantidadeSeparada}/{item.quantidadePlanejada}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Finalize button — only when all items separated */}
+                  {pendingItems.length === 0 ? (
+                    <button
+                      onClick={async () => {
+                        addToast('success', 'Todos os itens foram separados! Checklist pronto para o evento.');
+                        await refreshChecklistModal();
+                      }}
+                      className="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-3 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2 mt-3"
+                    >
+                      <CheckCircle size={18} />
+                      Finalizar Separação
+                    </button>
+                  ) : (
+                    <button
+                      disabled={true}
+                      className="w-full bg-red-500 text-white py-3 rounded-xl text-sm font-bold opacity-75 cursor-not-allowed flex items-center justify-center gap-2 mt-3"
+                    >
+                      <AlertCircle size={18} />
+                      Não é possível finalizar — {pendingItems.length} itens pendentes
+                    </button>
+                  )}
+                </div>
+
+                {/* Visual status cards per item */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {(checklistModal.items ?? []).map((item) => {
+                    const isSeparated = item.quantidadeSeparada >= item.quantidadePlanejada;
+                    const progress = (item.quantidadeSeparada / item.quantidadePlanejada) * 100;
+
+                    let statusColor = 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20';
+                    let statusIcon = '🟥';
+                    let statusText = 'NÃO SEPARADO';
+
+                    if (isSeparated) {
+                      statusColor = 'border-emerald-200 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20';
+                      statusIcon = '🟩';
+                      statusText = 'COMPLETO';
+                    } else if (progress > 0) {
+                      statusColor = 'border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20';
+                      statusIcon = '🟨';
+                      statusText = 'PARCIAL';
+                    }
+
+                    return (
+                      <div key={item.id} className={`rounded-xl border-2 p-4 ${statusColor}`}>
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <p className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                              {statusIcon} {item.nomeSnapshot}
+                            </p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">{item.setor.toUpperCase()}</p>
+                          </div>
+                          <span className="text-xs font-bold px-2 py-1 rounded bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                            {statusText}
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-slate-600 dark:text-slate-400">Progresso:</span>
+                            <span className="font-bold text-slate-800 dark:text-white">
+                              {item.quantidadeSeparada} / {item.quantidadePlanejada}
+                            </span>
+                          </div>
+
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full transition-all duration-500 ${
+                                isSeparated ? 'bg-emerald-500' : progress > 0 ? 'bg-amber-400' : 'bg-red-400'
+                              }`}
+                              style={{ width: `${Math.min(progress, 100)}%` }}
+                            />
+                          </div>
+
+                          {!isSeparated && (
+                            <button
+                              onClick={() => {
+                                setSeparateModal(item);
+                                setSeparateQty(item.quantidadePlanejada - item.quantidadeSeparada);
+                              }}
+                              className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2 rounded-lg text-xs font-medium transition-colors mt-2"
+                            >
+                              Separar {item.quantidadePlanejada - item.quantidadeSeparada} restantes
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -1282,16 +1415,16 @@ export default function Eventos() {
                         <td className="px-3 py-2 text-center">
                           <div className="flex gap-0.5 justify-center text-xs">
                             {(item.quantidadeOk ?? 0) > 0 && (
-                              <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeOk}âœ"</span>
+                              <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeOk}✓</span>
                             )}
                             {(item.quantidadeQuebrada ?? 0) > 0 && (
-                              <span className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeQuebrada}âœ•</span>
+                              <span className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeQuebrada}✕</span>
                             )}
                             {(item.quantidadePerdida ?? 0) > 0 && (
                               <span className="bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadePerdida}?</span>
                             )}
                             {(item.quantidadeOk ?? 0) === 0 && (item.quantidadeQuebrada ?? 0) === 0 && (item.quantidadePerdida ?? 0) === 0 && (
-                              <span className="text-slate-400">â€"</span>
+                              <span className="text-slate-400">—</span>
                             )}
                           </div>
                         </td>
@@ -1300,6 +1433,7 @@ export default function Eventos() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex gap-1 flex-wrap">
+                            {/* Employee: Separar */}
                             {canSeparate && item.quantidadeSeparada < item.quantidadePlanejada && (
                               <button
                                 onClick={() => {
@@ -1311,31 +1445,20 @@ export default function Eventos() {
                                 Separar
                               </button>
                             )}
-                            {canReturn && item.quantidadeDevolvida < item.quantidadeSeparada && (
+                            {/* 🔴 Employee: Devolver with mixed return */}
+                            {canEmployeeReturn && item.quantidadeDevolvida < item.quantidadeSeparada && (
                               <button
                                 onClick={() => {
-                                  setReturnModal(item);
                                   const remaining = item.quantidadeSeparada - item.quantidadeDevolvida;
-                                  setReturnConditions({ ok: remaining, quebrado: 0, perdido: 0 });
+                                  setReturnModal(item);
+                                  setReturnOk(remaining);
+                                  setReturnDanificado(0);
+                                  setReturnPerdido(0);
+                                  setReturnObservation('');
                                 }}
                                 className="text-xs font-medium px-2 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors"
                               >
                                 <RotateCcw size={11} className="inline mr-0.5" />Devolver
-                              </button>
-                            )}
-                            {canReturn && item.quantidadeDevolvida > 0 && (
-                              <button
-                                onClick={() => {
-                                  setEditReturnModal(item);
-                                  setEditReturnConditions({
-                                    ok: item.quantidadeOk ?? 0,
-                                    quebrado: item.quantidadeQuebrada ?? 0,
-                                    perdido: item.quantidadePerdida ?? 0,
-                                  });
-                                }}
-                                className="text-xs font-medium px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-                              >
-                                Editar Devolucao
                               </button>
                             )}
                             {canEditPlanned && (
@@ -1480,15 +1603,15 @@ export default function Eventos() {
         </div>
       </Modal>
 
-      {/* Return Modal â€" segmented conditions */}
+      {/* 🔴 EMPLOYEE Hybrid Return Modal — OK auto / Danificado-Perdido pending */}
       <Modal
         open={returnModal !== null}
-        onClose={() => { setReturnModal(null); setReturnConditions({ ok: 0, quebrado: 0, perdido: 0 }); }}
-        title={`Devolver â€" ${returnModal?.nomeSnapshot ?? ''}`}
+        onClose={() => { setReturnModal(null); setReturnOk(0); setReturnDanificado(0); setReturnPerdido(0); setReturnObservation(''); }}
+        title={`Devolver — ${returnModal?.nomeSnapshot ?? ''}`}
       >
         {returnModal && (() => {
           const remaining = returnModal.quantidadeSeparada - returnModal.quantidadeDevolvida;
-          const totalReturn = returnConditions.ok + returnConditions.quebrado + returnConditions.perdido;
+          const totalReturn = returnOk + returnDanificado + returnPerdido;
           const isValid = totalReturn > 0 && totalReturn <= remaining;
 
           return (
@@ -1496,7 +1619,7 @@ export default function Eventos() {
               <div className="grid grid-cols-3 gap-3 text-center">
                 {[
                   { label: 'Separado', value: returnModal.quantidadeSeparada, color: 'text-blue-600 dark:text-blue-400' },
-                  { label: 'Ja devolvido', value: returnModal.quantidadeDevolvida, color: 'text-emerald-600 dark:text-emerald-400' },
+                  { label: 'Já devolvido', value: returnModal.quantidadeDevolvida, color: 'text-emerald-600 dark:text-emerald-400' },
                   { label: 'Aguardando', value: remaining, color: 'text-amber-600 dark:text-amber-400 font-bold' },
                 ].map((stat) => (
                   <div key={stat.label} className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-3">
@@ -1506,98 +1629,61 @@ export default function Eventos() {
                 ))}
               </div>
 
-              <p className="text-sm text-slate-600 dark:text-slate-400 text-center">Selecione a quantidade por condicao:</p>
-
+              {/* 🔴 MIXED RETURN: 3 separate quantity steppers */}
               <div className="space-y-3">
                 {[
-                  { key: 'ok' as const, label: 'âœ" OK â€" Em bom estado', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
-                  { key: 'quebrado' as const, label: 'âœ• Quebrado â€" Com dano', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
-                  { key: 'perdido' as const, label: '? Perdido â€" Nao encontrado', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
-                ].map(({ key, label, color }) => (
-                  <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</span>
-                    <QuantityStepper
-                      value={returnConditions[key]}
-                      onChange={(v) => setReturnConditions((prev) => ({ ...prev, [key]: v }))}
-                      min={0}
-                      max={remaining - totalReturn + returnConditions[key]}
-                    />
+                  { key: 'ok' as const, label: '✅ OK — Bom estado', desc: 'Estoque atualizado automaticamente', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10', value: returnOk, setter: setReturnOk },
+                  { key: 'danificado' as const, label: '⚠️ Danificado — Com defeito', desc: 'Aguardará confirmação do admin', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10', value: returnDanificado, setter: setReturnDanificado },
+                  { key: 'perdido' as const, label: '❌ Perdido — Extraviado', desc: 'Aguardará confirmação do admin', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10', value: returnPerdido, setter: setReturnPerdido },
+                ].map(({ key, label, desc, color, value, setter }) => (
+                  <div key={key} className={`rounded-xl border p-3 ${color}`}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</span>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{desc}</p>
+                      </div>
+                      <QuantityStepper
+                        value={value}
+                        onChange={setter}
+                        min={0}
+                        max={remaining - totalReturn + value}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
 
+              {/* Validation summary */}
               <div className={`text-center py-2 rounded-xl text-sm font-medium ${
-                totalReturn === 0
-                  ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
-                  : totalReturn > remaining
-                    ? 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-                    : 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                isValid
+                  ? 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                  : totalReturn === 0
+                  ? 'bg-slate-100 dark:bg-slate-700/30 text-slate-500 dark:text-slate-400'
+                  : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300'
               }`}>
-                Total a devolver: <strong>{totalReturn}</strong> / {remaining} restante(s)
+                Devolvendo: <strong>{totalReturn}</strong> / {remaining}
+                {totalReturn > remaining && <span className="ml-2 text-xs">(excede o máximo)</span>}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Observação (opcional)
+                </label>
+                <textarea
+                  className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm"
+                  rows={2}
+                  placeholder="Ex: equipamento com arranhões, cabo danificado..."
+                  value={returnObservation}
+                  onChange={(e) => setReturnObservation(e.target.value)}
+                />
               </div>
 
               <button
                 onClick={handleDevolver}
                 disabled={!isValid}
-                className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
+                className="w-full py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-indigo-500 hover:bg-indigo-600 text-white"
               >
-                Confirmar Devolucao
-              </button>
-            </div>
-          );
-        })()}
-      </Modal>
-
-      {/* Edit return composition modal */}
-      <Modal
-        open={editReturnModal !== null}
-        onClose={() => { setEditReturnModal(null); setEditReturnConditions({ ok: 0, quebrado: 0, perdido: 0 }); }}
-        title={`Editar devolucao â€" ${editReturnModal?.nomeSnapshot ?? ''}`}
-      >
-        {editReturnModal && (() => {
-          const total = (editReturnModal.quantidadeOk ?? 0) + (editReturnModal.quantidadeQuebrada ?? 0) + (editReturnModal.quantidadePerdida ?? 0);
-          const totalNovo = editReturnConditions.ok + editReturnConditions.quebrado + editReturnConditions.perdido;
-          return (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 bg-slate-50 dark:bg-slate-700/30">
-                <p className="text-sm text-slate-700 dark:text-slate-200 font-medium">
-                  Total devolvido deve permanecer: <strong>{total}</strong>
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-300 mt-1">
-                  Ao remover "Dano" ou "Perda", a ocorrencia vinculada sera anulada e a quantidade retorna ao saldo disponivel.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                {[
-                  { key: 'ok' as const, label: 'âœ" OK', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
-                  { key: 'quebrado' as const, label: 'âœ• Quebrado (Dano)', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
-                  { key: 'perdido' as const, label: '? Perdido (Perda)', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
-                ].map(({ key, label, color }) => (
-                  <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</span>
-                    <QuantityStepper
-                      value={editReturnConditions[key]}
-                      onChange={(v) => setEditReturnConditions((prev) => ({ ...prev, [key]: v }))}
-                      min={0}
-                      max={total - (totalNovo - editReturnConditions[key])}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className={`text-center py-2 rounded-xl text-sm font-medium ${
-                totalNovo === total ? 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-200' : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-200'
-              }`}>
-                Total atual: <strong>{totalNovo}</strong> / {total}
-              </div>
-
-              <button
-                onClick={handleEditarDevolucao}
-                disabled={totalNovo !== total}
-                className="w-full bg-slate-800 hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
-              >
-                Salvar edicao da devolucao
+                {`Confirmar Devolução (${totalReturn} unidade${totalReturn !== 1 ? 's' : ''})`}
               </button>
             </div>
           );

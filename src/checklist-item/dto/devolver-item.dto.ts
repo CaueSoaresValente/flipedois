@@ -1,11 +1,17 @@
-import { IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class DevolverItemDto {
   @IsNumber()
-  quantidade: number;
+  @Min(0)
+  quantidadeOk: number;
 
-  @IsString()
-  situacao: 'ok' | 'quebrado' | 'perdido';
+  @IsNumber()
+  @Min(0)
+  quantidadeDanificada: number;
+
+  @IsNumber()
+  @Min(0)
+  quantidadePerdida: number;
 
   @IsOptional()
   @IsString()
