@@ -53,6 +53,9 @@ export class Equipment {
   @Column({ default: 'interno' })
   origem: EquipmentOrigem;
 
+  @Column({ default: 'som' })
+  setor: 'som' | 'luz' | 'video' | 'estrutura';
+
   @Column({ nullable: true })
   fornecedor?: string;
 

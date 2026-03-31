@@ -54,6 +54,9 @@ export class ChecklistItem {
   quantidadeDevolvida: number;
 
   @Column({ default: 0 })
+  quantidadeDevolvidaOriginal: number;
+
+  @Column({ default: 0 })
   quantidadeOk: number;
 
   @Column({ default: 0 })

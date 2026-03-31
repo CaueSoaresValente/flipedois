@@ -9,6 +9,7 @@ import {
   PackageCheck,
   RotateCcw,
   Link,
+  Search,
 } from 'lucide-react';
 import { checklistApi, checklistItemApi, equipmentApi, eventApi } from '../services/api';
 import Modal from '../components/Modal';
@@ -135,6 +136,10 @@ export default function Checklists() {
   const [limit, setLimit] = useState(20);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+
+  // Filters
+  const [searchFilter, setSearchFilter] = useState('');
+  const [clStatusFilter, setClStatusFilter] = useState('');
 
   // Separation modal with stepper
   const [separateModal, setSeparateModal] = useState<ChecklistItem | null>(null);
@@ -446,9 +451,44 @@ export default function Checklists() {
         )}
       </div>
 
+      {/* Filters Bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+            placeholder="Buscar checklist..."
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+          />
+        </div>
+        <select
+          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+          value={clStatusFilter}
+          onChange={(e) => setClStatusFilter(e.target.value)}
+        >
+          <option value="">Todos os Status</option>
+          <option value="rascunho">Rascunho</option>
+          <option value="liberado">Liberado</option>
+          <option value="em_evento">Em Evento</option>
+          <option value="pendente_devolucao">Pendente Devolução</option>
+          <option value="concluido">Concluído</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
+      </div>
+
       {/* Checklist Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {checklists.map((cl) => (
+        {checklists.filter((cl) => {
+          if (searchFilter) {
+            const s = searchFilter.toLowerCase();
+            const matchName = cl.nome.toLowerCase().includes(s);
+            const matchEvent = cl.event?.nome.toLowerCase().includes(s);
+            if (!matchName && !matchEvent) return false;
+          }
+          if (clStatusFilter && cl.status !== clStatusFilter) return false;
+          return true;
+        }).map((cl) => (
           <div
             key={cl.id}
             className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 hover:shadow-lg transition-shadow"
@@ -801,7 +841,7 @@ export default function Checklists() {
                   
                   let statusColor = 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20';
                   let statusIcon = '🟥';
-                  let statusText = 'NÍO SEPARADO';
+                  let statusText = 'NÃO SEPARADO';
                   
                   if (isSeparated) {
                     statusColor = 'border-emerald-200 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20';
@@ -994,43 +1034,15 @@ export default function Checklists() {
                             <button
                               onClick={() => {
                                 setReturnModal(item);
-                                setReturnQty(1);
+                                setReturnOk(0);
+                                setReturnDanificado(0);
+                                setReturnPerdido(0);
                                 setReturnObservation('');
                               }}
                               className="text-xs font-medium text-emerald-600 dark:text-white hover:underline"
                             >
                               <RotateCcw size={11} className="inline mr-0.5" />
                               Devolver
-                            </button>
-                          )}
-                          {canReview && item.statusDevolucao === 'pendente_revisao' && (
-                            <button
-                              onClick={() => {
-                                setReviewModal(item);
-                                setReviewConditions({
-                                  ok: item.quantidadeDevolvida,
-                                  danificado: 0,
-                                  perdido: 0,
-                                });
-                              }}
-                              className="text-xs font-medium text-red-600 dark:text-white hover:underline"
-                            >
-                              Revisar Devolução
-                            </button>
-                          )}
-                          {canEditReturn && (item.quantidadeOk ?? 0) > 0 && (
-                            <button
-                              onClick={() => {
-                                setEditReturnModal(item);
-                                setEditReturnConditions({
-                                  ok: item.quantidadeOk ?? 0,
-                                  quebrado: item.quantidadeQuebrada ?? 0,
-                                  perdido: item.quantidadePerdida ?? 0,
-                                });
-                              }}
-                              className="text-xs font-medium text-slate-700 dark:text-white hover:underline"
-                            >
-                              Editar Devolução
                             </button>
                           )}
                           {canEditPlanned && (
@@ -1195,15 +1207,16 @@ export default function Checklists() {
         </div>
       </Modal>
 
-      {/* Return Modal - simplified for employees (quantity + observation only) */}
+      {/* Return Modal - mixed return (OK + Damaged + Lost per item) */}
       <Modal
         open={returnModal !== null}
-        onClose={() => { setReturnModal(null); setReturnQty(1); setReturnObservation(''); }}
+        onClose={() => { setReturnModal(null); setReturnOk(0); setReturnDanificado(0); setReturnPerdido(0); setReturnObservation(''); }}
         title={`Devolver - ${returnModal?.nomeSnapshot ?? ''}`}
       >
         {returnModal && (() => {
           const remaining = returnModal.quantidadeSeparada - returnModal.quantidadeDevolvida;
-          const isValid = returnQty > 0 && returnQty <= remaining;
+          const totalReturn = returnOk + returnDanificado + returnPerdido;
+          const isValid = totalReturn > 0 && totalReturn <= remaining;
 
           return (
             <div className="space-y-5">
@@ -1221,28 +1234,25 @@ export default function Checklists() {
                 ))}
               </div>
 
-              <div className="rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4">
-                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300 mb-1">
-                  ⚠️ Apenas registro de devolução
-                </p>
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  Você está apenas registrando a quantidade devolvida. O administrador revisará e definirá o status final (OK/Danificado/Perdido).
-                </p>
-              </div>
-
-              {/* Quantity selector */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Quantidade a devolver:
-                </label>
-                <div className="flex justify-center py-2">
-                  <QuantityStepper 
-                    value={returnQty} 
-                    onChange={setReturnQty} 
-                    min={1} 
-                    max={remaining} 
-                  />
-                </div>
+              {/* Mixed return quantities */}
+              <div className="space-y-3">
+                {[
+                  { key: 'ok' as const, label: '✓ OK', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10', value: returnOk, setter: setReturnOk },
+                  { key: 'dano' as const, label: '✕ Danificado', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10', value: returnDanificado, setter: setReturnDanificado },
+                  { key: 'perda' as const, label: '? Perdido', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10', value: returnPerdido, setter: setReturnPerdido },
+                ].map(({ key, label, color, value, setter }) => (
+                  <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      {label}
+                    </span>
+                    <QuantityStepper
+                      value={value}
+                      onChange={setter}
+                      min={0}
+                      max={remaining}
+                    />
+                  </div>
+                ))}
               </div>
 
               {/* Observation field */}
@@ -1265,11 +1275,11 @@ export default function Checklists() {
                   ? 'bg-red-100 dark:bg-red-900/20 text-red-700'
                   : 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700'
               }`}>
-                {!isValid 
-                  ? returnQty > remaining 
-                    ? `Quantidade excede o restante (${remaining})`
-                    : 'Informe uma quantidade válida'
-                  : `Quantidade válida: ${returnQty} / ${remaining}`
+                {totalReturn === 0
+                  ? 'Informe pelo menos uma quantidade'
+                  : totalReturn > remaining
+                  ? `Total (${totalReturn}) excede o restante (${remaining})`
+                  : `Total válido: ${totalReturn} / ${remaining}`
                 }
               </div>
 
@@ -1285,82 +1295,6 @@ export default function Checklists() {
         })()}
       </Modal>
 
-      {/* Admin Review Modal - where stock changes happen */}
-      <Modal
-        open={reviewModal !== null}
-        onClose={() => { setReviewModal(null); setReviewConditions({ ok: 0, danificado: 0, perdido: 0 }); }}
-        title={`Revisar Devolução - ${reviewModal?.nomeSnapshot ?? ''}`}
-      >
-        {reviewModal && (() => {
-          const totalReview = reviewConditions.ok + reviewConditions.danificado + reviewConditions.perdido;
-          const isValid = totalReview === reviewModal.quantidadeDevolvida;
-
-          return (
-            <div className="space-y-5">
-              <div className="rounded-xl border border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 p-4">
-                <p className="text-sm font-semibold text-red-800 dark:text-red-300 mb-1">
-                  🔴 Ação Administrativa
-                </p>
-                <p className="text-xs text-red-700 dark:text-red-400">
-                  Esta revisão AFETA o estoque. OK retorna ao disponível, Danificado vai para danificados, Perdido reduz o total.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-center">
-                {[
-                  { label: 'Devolvido', value: reviewModal.quantidadeDevolvida, color: 'text-blue-600' },
-                  { label: 'A revisar', value: totalReview, color: 'text-amber-600 font-bold' },
-                ].map((stat) => (
-                  <div key={stat.label} className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-3">
-                    <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">{stat.label}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-3">
-                {[
-                  { key: 'ok' as const, label: '✓ OK - Retorna ao disponível', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
-                  { key: 'danificado' as const, label: '✕ Danificado - Vai para danificados', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
-                  { key: 'perdido' as const, label: '? Perdido - Reduz total', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
-                ].map(({ key, label, color }) => (
-                  <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                      {label}
-                    </span>
-                    <QuantityStepper
-                      value={reviewConditions[key]}
-                      onChange={(v) => setReviewConditions((prev) => ({ ...prev, [key]: v }))}
-                      min={0}
-                      max={reviewModal.quantidadeDevolvida}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className={`text-center py-2 rounded-xl text-sm font-medium ${
-                !isValid
-                  ? 'bg-red-100 dark:bg-red-900/20 text-red-700'
-                  : 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700'
-              }`}>
-                {!isValid 
-                  ? `Total inválido: ${totalReview} / ${reviewModal.quantidadeDevolvida}`
-                  : `Total válido: ${totalReview} / ${reviewModal.quantidadeDevolvida}`
-                }
-              </div>
-
-              <button
-                onClick={handleRevisarDevolucao}
-                disabled={!isValid}
-                className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
-              >
-                Revisar e Atualizar Estoque
-              </button>
-            </div>
-          );
-        })()}
-      </Modal>
-
       {/* Edit planned quantity modal */}
       <Modal
         open={editQtyModal !== null}
@@ -1370,7 +1304,7 @@ export default function Checklists() {
         {editQtyModal && (
           <div className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou além), o sistema ajusta o estoque automaticamente (Saldo Disponível ↔ Em Uso).
+              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou além), o sistema ajusta o estoque automaticamente.
             </p>
             <div className="flex justify-center py-2">
               <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} />
@@ -1383,62 +1317,6 @@ export default function Checklists() {
             </button>
           </div>
         )}
-      </Modal>
-
-      {/* Edit return composition modal */}
-      <Modal
-        open={editReturnModal !== null}
-        onClose={() => { setEditReturnModal(null); setEditReturnConditions({ ok: 0, quebrado: 0, perdido: 0 }); }}
-        title={`Editar devolução - ${editReturnModal?.nomeSnapshot ?? ''}`}
-      >
-        {editReturnModal && (() => {
-          const total = (editReturnModal.quantidadeOk ?? 0) + (editReturnModal.quantidadeQuebrada ?? 0) + (editReturnModal.quantidadePerdida ?? 0);
-          const totalNovo = editReturnConditions.ok + editReturnConditions.quebrado + editReturnConditions.perdido;
-          return (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 bg-slate-50 dark:bg-slate-700/30">
-                <p className="text-sm text-slate-700 dark:text-slate-200 font-medium">
-                  Total devolvido deve permanecer: <strong>{total}</strong>
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-300 mt-1">
-                  Ao remover “Dano” ou “Perda”, a ocorrência vinculada será anulada e a quantidade retorna ao saldo disponível.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                {[
-                  { key: 'ok' as const, label: '✓ OK', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
-                  { key: 'quebrado' as const, label: '✕ Quebrado (Dano)', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
-                  { key: 'perdido' as const, label: '? Perdido (Perda)', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
-                ].map(({ key, label, color }) => (
-                  <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</span>
-                    <QuantityStepper
-                      value={editReturnConditions[key]}
-                      onChange={(v) => setEditReturnConditions((prev) => ({ ...prev, [key]: v }))}
-                      min={0}
-                      max={total - (totalNovo - editReturnConditions[key])}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className={`text-center py-2 rounded-xl text-sm font-medium ${
-                totalNovo === total ? 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-200' : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-200'
-              }`}>
-                Total atual: <strong>{totalNovo}</strong> / {total}
-              </div>
-
-              <button
-                onClick={handleEditarDevolucao}
-                disabled={totalNovo !== total}
-                className="w-full bg-slate-800 hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
-              >
-                Salvar edição da devolução
-              </button>
-            </div>
-          );
-        })()}
       </Modal>
 
       {/* Separation Pending Items blocking modal */}

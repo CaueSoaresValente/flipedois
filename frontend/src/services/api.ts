@@ -41,6 +41,7 @@ export const equipmentApi = {
     quantidadeTotal: number;
     origem?: string;
     fornecedor?: string;
+    setor?: string;
   }) => api.post('/equipment', data),
   update: (id: number, data: any) => api.patch(`/equipment/${id}`, data),
   deactivate: (id: number) => api.patch(`/equipment/${id}/desativar`),
@@ -108,7 +109,7 @@ export const checklistItemApi = {
 // Event API
 // =====================
 export const eventApi = {
-  getAll: (params?: { page?: number; limit?: number }) => api.get('/event', { params }),
+  getAll: (params?: { page?: number; limit?: number; arquivados?: boolean }) => api.get('/event', { params }),
   getOne: (id: number) => api.get(`/event/${id}`),
   create: (data: any) => api.post('/event', data),
   update: (id: number, data: any) => api.patch(`/event/${id}`, data),
@@ -122,6 +123,7 @@ export const eventApi = {
   cancelar: (id: number, motivo: string) =>
     api.patch(`/event/${id}/cancelar`, { motivo }),
   clonar: (id: number) => api.post(`/event/${id}/clonar`),
+  arquivar: (id: number) => api.patch(`/event/${id}/arquivar`),
 };
 
 // =====================
@@ -142,6 +144,8 @@ export const occurrenceApi = {
     api.patch(`/equipment-occurrence/${id}`, data),
   cancelar: (id: number) =>
     api.patch(`/equipment-occurrence/${id}/cancelar`),
+  validarEvento: (eventId: number, equipmentId: number) =>
+    api.get('/equipment-occurrence/validar-evento', { params: { eventId, equipmentId } }),
 };
 
 // =====================
@@ -155,6 +159,8 @@ export const userApi = {
     senha: string;
     role?: string;
   }) => api.post('/user', data),
+  desativar: (id: number) => api.patch(`/user/${id}/desativar`),
+  reativar: (id: number) => api.patch(`/user/${id}/reativar`),
 };
 
 // =====================

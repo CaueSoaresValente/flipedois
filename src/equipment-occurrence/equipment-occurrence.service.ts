@@ -24,6 +24,9 @@ export class EquipmentOccurrenceService {
     @InjectRepository(ChecklistItem)
     private checklistItemRepo: Repository<ChecklistItem>,
 
+    @InjectRepository(Checklist)
+    private checklistRepo: Repository<Checklist>,
+
     private readonly dataSource: DataSource,
     private readonly stockService: StockService,
   ) {}
@@ -67,21 +70,30 @@ export class EquipmentOccurrenceService {
       .filter((o) => o.tipo === 'DANO')
       .reduce((sum, o) => sum + o.quantidade, 0);
 
-    const totalPerda = activeOccurrences
-      .filter((o) => o.tipo === 'PERDA')
+    const totalPerdaBaixada = activeOccurrences
+      .filter((o) => o.tipo === 'PERDA' && o.status === 'BAIXADO')
       .reduce((sum, o) => sum + o.quantidade, 0);
 
-    const baseOk = Math.max(0, item.quantidadeDevolvida - totalDano - totalPerda);
+    const totalPerdaPendente = activeOccurrences
+      .filter((o) => o.tipo === 'PERDA' && o.status === 'PENDENTE')
+      .reduce((sum, o) => sum + o.quantidade, 0);
+
+    // O campo quantidadeDevolvida agora é dinâmico: original - perdas confirmadas
+    item.quantidadeDevolvida = Math.max(0, item.quantidadeDevolvidaOriginal - totalPerdaBaixada);
+    
+    // OK = O que foi devolvido (ajustado) - Danos - Perdas que ainda não baixaram do Devol.
+    const baseOk = Math.max(0, item.quantidadeDevolvida - totalDano - totalPerdaPendente);
+    
     item.quantidadeOk = baseOk;
     item.quantidadeQuebrada = totalDano;
-    item.quantidadePerdida = totalPerda;
+    item.quantidadePerdida = totalPerdaBaixada + totalPerdaPendente;
 
     // Determine status
     if (item.quantidadeDevolvida === 0) {
       item.statusDevolucao = 'pendente';
-    } else if (totalPerda > 0) {
+    } else if (item.quantidadePerdida > 0) {
       item.statusDevolucao = 'perdido';
-    } else if (totalDano > 0) {
+    } else if (item.quantidadeQuebrada > 0) {
       item.statusDevolucao = 'quebrado';
     } else {
       item.statusDevolucao = 'devolvido';
@@ -146,6 +158,34 @@ export class EquipmentOccurrenceService {
     await manager.save(Checklist, checklist);
   }
 
+  /**
+   * Valida se um equipamento participou de um evento e retorna os dados do checklist item.
+   */
+  async validarEventoEquipamento(eventId: number, equipmentId: number) {
+    const checklist = await this.checklistRepo.findOne({
+      where: { eventId },
+    });
+
+    if (!checklist) {
+      return { valido: false, mensagem: 'Evento não possui checklist.' };
+    }
+
+    const item = await this.checklistItemRepo.findOne({
+      where: { checklistId: checklist.id, equipmentId },
+    });
+
+    if (!item) {
+      return { valido: false, mensagem: 'Este equipamento não participou deste evento.' };
+    }
+
+    return {
+      valido: true,
+      checklistItemId: item.id,
+      quantidadeOk: item.quantidadeOk,
+      quantidadeDevolvida: item.quantidadeDevolvida,
+    };
+  }
+
   // ============================================================
   // STOCK REVERSAL HELPER
   // ============================================================
@@ -161,20 +201,28 @@ export class EquipmentOccurrenceService {
     occurrence: EquipmentOccurrence,
   ) {
     const { tipo, quantidade, equipment, status } = occurrence;
+    const isManual = !!occurrence.manual;
 
     if (status === 'BAIXADO' || status === 'RESOLVIDO') {
       // BAIXADO: estoque foi alterado na confirmação → reverter
       if (tipo === 'DANO') {
+        // cancelarDano: danificada -= qty, disponivel += qty (igual para manual e checklist)
         await this.stockService.cancelarDano(manager, equipment.id, quantidade);
       } else if (tipo === 'PERDA') {
+        // cancelarPerda: perdida -= qty, disponivel += qty, total += qty (igual para manual e checklist)
         await this.stockService.cancelarPerda(manager, equipment.id, quantidade);
       } else if (tipo === 'OK') {
-        // OK BAIXADO: emUso -= qty, disponivel += qty -> reverter: emUso += qty, disponivel -= qty
-        await this.stockService.reservarEstoque(
-          manager,
-          equipment.id,
-          quantidade,
-        );
+        if (isManual) {
+          // OK manual BAIXADO: disponivel foi ajustado → sem reversão adicional
+          // (manual OK es incomum, mas se existir, não precisa reverter)
+        } else {
+          // OK checklist RESOLVIDO: emUso -= qty, disponivel += qty → reverter: reservar
+          await this.stockService.reservarEstoque(
+            manager,
+            equipment.id,
+            quantidade,
+          );
+        }
       }
     }
     // Se status é PENDENTE: estoque NÃO foi alterado ainda (modelo "Confirm Always")
@@ -223,22 +271,36 @@ export class EquipmentOccurrenceService {
         );
       }
 
-      // 🔴 REGRA DE VALIDAÇÃO MANUAL (ESTOQUE)
-      // Para ocorrências manuais, o evento é informativo.
-      // A validação deve ser baseada no TIPO da ocorrência:
+      // 🔴 REGRA DE VALIDAÇÃO MANUAL
       if (manual) {
-        if (tipo === 'OK') {
-          if (quantidade > equipment.quantidadeEmUso) {
+        if (eventId) {
+          // Se tem evento, a ocorrência manual deve ser vinculada ao checklist item
+          const validacao = await this.validarEventoEquipamento(eventId, equipmentId);
+          if (!validacao.valido || validacao.quantidadeOk === undefined) {
+            throw new BadRequestException(validacao.mensagem || 'Falha na validação do evento.');
+          }
+
+          if (quantidade > (validacao.quantidadeOk ?? 0)) {
             throw new BadRequestException(
-              `A quantidade informada (${quantidade}) excede o saldo em uso do equipamento (${equipment.quantidadeEmUso}).`,
+              `A quantidade informada (${quantidade}) excede o saldo OK deste equipamento no evento (${validacao.quantidadeOk}).`,
             );
           }
+          checklistItemId = validacao.checklistItemId;
         } else {
-          // DANO ou PERDA
-          if (quantidade > equipment.quantidadeDisponivel) {
-            throw new BadRequestException(
-              `A quantidade informada (${quantidade}) excede o saldo disponível do equipamento (${equipment.quantidadeDisponivel}).`,
-            );
+          // Sem evento: validação contra estoque disponível ou em uso conforme o tipo
+          if (tipo === 'OK') {
+            if (quantidade > equipment.quantidadeEmUso) {
+              throw new BadRequestException(
+                `A quantidade informada (${quantidade}) excede o saldo em uso do equipamento (${equipment.quantidadeEmUso}).`,
+              );
+            }
+          } else {
+            // DANO ou PERDA manual sem evento sai do DISPONÍVEL
+            if (quantidade > equipment.quantidadeDisponivel) {
+              throw new BadRequestException(
+                `A quantidade informada (${quantidade}) excede o saldo disponível do equipamento (${equipment.quantidadeDisponivel}).`,
+              );
+            }
           }
         }
       }
@@ -256,6 +318,7 @@ export class EquipmentOccurrenceService {
         tipo,
         status: 'PENDENTE',
         checklistItemId: checklistItemId ?? null,
+        manual,
         ...(event ? { event } : {}),
       });
 
@@ -336,7 +399,7 @@ export class EquipmentOccurrenceService {
       }
 
       const { tipo, quantidade, equipment } = occurrence;
-      const isChecklist = !!occurrence.checklistItemId;
+      const isManual = !!occurrence.manual;
 
       // Sempre recarrega com lock para garantir integridade
       const eq = await manager.findOne(Equipment, {
@@ -346,42 +409,51 @@ export class EquipmentOccurrenceService {
 
       if (!eq) throw new BadRequestException('Equipamento não encontrado.');
 
+      // REGRA CHAVE:
+      // - Manual (manual=true): equipamento já foi devolvido OK → estoque sai de DISPONÍVEL
+      // - Checklist-generated (manual=false): equipamento está em uso → estoque sai de EM_USO
       if (tipo === 'DANO') {
-        if (isChecklist) {
-          await this.stockService.registrarDevolucaoDanificado(
+        if (isManual) {
+          // Manual: disponivel -= qty, danificada += qty
+          await this.stockService.registrarDanoManual(
             manager,
             eq.id,
             quantidade,
           );
         } else {
-          await this.stockService.registrarDanoManual(
+          // Checklist-generated: emUso -= qty, danificada += qty
+          await this.stockService.registrarDevolucaoDanificado(
             manager,
             eq.id,
             quantidade,
           );
         }
       } else if (tipo === 'PERDA') {
-        if (isChecklist) {
-          await this.stockService.registrarDevolucaoPerdido(
+        if (isManual) {
+          // Manual: disponivel -= qty, perdida += qty, total -= qty
+          await this.stockService.registrarPerdaManual(
             manager,
             eq.id,
             quantidade,
           );
         } else {
-          await this.stockService.registrarPerdaManual(
+          // Checklist-generated: emUso -= qty, perdida += qty, total -= qty
+          await this.stockService.registrarDevolucaoPerdido(
             manager,
             eq.id,
             quantidade,
           );
         }
       } else if (tipo === 'OK') {
-        if (eq.quantidadeEmUso >= quantidade) {
+        if (!isManual && eq.quantidadeEmUso >= quantidade) {
+          // Checklist OK: emUso -= qty, disponivel += qty
           await this.stockService.registrarDevolucaoOk(
             manager,
             eq.id,
             quantidade,
           );
         }
+        // Manual OK: não faz sentido na maioria dos cenários
       }
 
       // OK = resolved (back to stock), DANO/PERDA = written off
@@ -441,10 +513,11 @@ export class EquipmentOccurrenceService {
   // EDITAR — Edição completa de ocorrência com reversão de estoque
   // ============================================================
   /**
-   * EDITAR OCORRÊNCIA: Felipe pode alterar quantidade, descrição, tipo e equipamento.
+   * EDITAR OCORRÊNCIA: Apenas tipo e descrição podem ser alterados.
+   * Quantidade e equipamento são IMUTÁVEIS após a criação.
    * Somente ocorrências PENDENTES podem ser editadas.
    *
-   * LÓGICA DE REVERSÍO:
+   * LÓGICA DE REVERSÃO (quando muda tipo):
    * 1. Reverte o impacto de estoque da ocorrência atual
    * 2. Atualiza os campos da ocorrência
    * 3. Reaplica o impacto de estoque com os novos valores
@@ -459,6 +532,15 @@ export class EquipmentOccurrenceService {
     tipo?: 'OK' | 'DANO' | 'PERDA',
     equipmentId?: number,
   ) {
+    // 🔴 REGRA: Quantidade e equipamento NÃO podem ser alterados após a criação
+    if (quantidade !== undefined) {
+      throw new BadRequestException('A quantidade não pode ser alterada após a criação da ocorrência.');
+    }
+    if (equipmentId !== undefined) {
+      throw new BadRequestException('O equipamento não pode ser alterado após a criação da ocorrência.');
+    }
+    if (tipo && !['OK', 'DANO', 'PERDA'].includes(tipo)) throw new BadRequestException('Tipo inválido.');
+
     return this.dataSource.transaction(async (manager) => {
       const occurrence = await manager.findOne(EquipmentOccurrence, {
         where: { id },
@@ -517,16 +599,15 @@ export class EquipmentOccurrenceService {
           const novoTipo = occurrence.tipo;
           const novaQtd = occurrence.quantidade;
           const equipId = occurrence.equipment.id;
+          const isManual = !!occurrence.manual;
 
-          // After reversal, determine where the qty landed:
-          // - DANO reversed (cancelarDano) → qty in DISPONIVEL
-          // - PERDA reversed (cancelarPerda) → qty in DISPONIVEL
-          // - OK reversed (reservarEstoque) → qty in EM_USO
+          // After reversal, qty always lands in DISPONIVEL
+          // (cancelarDano → disponivel, cancelarPerda → disponivel, OK reversal → emUso)
           const qtyInDisponivel = tipoAntigo === 'DANO' || tipoAntigo === 'PERDA';
-          const qtyInEmUso = tipoAntigo === 'OK';
+          const qtyInEmUso = tipoAntigo === 'OK' && !isManual;
 
           if (novoTipo === 'DANO') {
-            if (qtyInDisponivel) {
+            if (qtyInDisponivel || isManual) {
               // disponivel → danificada
               await this.stockService.registrarDanoManual(manager, equipId, novaQtd);
             } else if (qtyInEmUso) {
@@ -534,7 +615,7 @@ export class EquipmentOccurrenceService {
               await this.stockService.registrarDevolucaoDanificado(manager, equipId, novaQtd);
             }
           } else if (novoTipo === 'PERDA') {
-            if (qtyInDisponivel) {
+            if (qtyInDisponivel || isManual) {
               // disponivel → perdida + total reduction
               await this.stockService.registrarPerdaManual(manager, equipId, novaQtd);
             } else if (qtyInEmUso) {
@@ -546,7 +627,7 @@ export class EquipmentOccurrenceService {
               // emUso → disponivel
               await this.stockService.registrarDevolucaoOk(manager, equipId, novaQtd);
             }
-            // If qtyInDisponivel: already there after reversal, no-op
+            // If qtyInDisponivel or isManual: already there after reversal, no-op
           }
         }
         // If was PENDENTE: no stock was applied, no re-application needed

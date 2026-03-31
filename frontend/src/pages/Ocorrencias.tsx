@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Plus, Check, X, RefreshCw, Search, Edit3 } from 'lucide-react';
+import { AlertTriangle, Plus, Check, RefreshCw, Search, Edit3, Filter, Clock } from 'lucide-react';
 import { occurrenceApi, equipmentApi, eventApi } from '../services/api';
 import Modal from '../components/Modal';
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import Pagination from '../components/Pagination';
+import EquipmentSearch from '../components/EquipmentSearch';
 
 interface Occurrence {
   id: number;
@@ -19,6 +20,8 @@ interface Occurrence {
   event: { id: number; nome: string } | null;
   checklistItemId: number | null;
 }
+
+const OK_HIDE_KEY = 'flipedois_ok_hide_days';
 
 export default function Ocorrencias() {
   const [items, setItems] = useState<Occurrence[]>([]);
@@ -47,7 +50,14 @@ export default function Ocorrencias() {
   const [quantidade, setQuantidade] = useState(1);
   const [descricao, setDescricao] = useState('');
   const [tipo, setTipo] = useState('DANO');
-  const [motivo, setMotivo] = useState('');
+
+  // Filters
+  const [searchFilter, setSearchFilter] = useState('');
+  const [tipoFilter, setTipoFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [okHideDays, setOkHideDays] = useState(() => {
+    return localStorage.getItem(OK_HIDE_KEY) || '0';
+  });
 
   async function load() {
     try {
@@ -72,15 +82,41 @@ export default function Ocorrencias() {
     load();
   }, [page, limit]);
 
+  const [validation, setValidation] = useState<{ valido: boolean; quantidadeOk: number; mensagem?: string } | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+
+  useEffect(() => {
+    async function validate() {
+      if (equipmentId && eventId) {
+        setIsValidating(true);
+        try {
+          const res = await occurrenceApi.validarEvento(Number(eventId), Number(equipmentId));
+          setValidation(res.data);
+        } catch (err) {
+          setValidation({ valido: false, quantidadeOk: 0 });
+        } finally {
+          setIsValidating(false);
+        }
+      } else {
+        setValidation(null);
+      }
+    }
+    validate();
+  }, [equipmentId, eventId]);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    if (eventId && validation && !validation.valido) {
+      addToast('error', 'Este equipamento não participou deste evento.');
+      return;
+    }
     try {
       await occurrenceApi.create({
         equipmentId: Number(equipmentId),
         eventId: eventId ? Number(eventId) : undefined,
         quantidade,
         descricao,
-        tipo: tipo as 'OK' | 'DANO' | 'PERDA',
+        tipo: tipo as 'DANO' | 'PERDA',
       });
       setModalOpen(false);
       resetForm();
@@ -97,8 +133,33 @@ export default function Ocorrencias() {
     setQuantidade(1);
     setDescricao('');
     setTipo('DANO');
-    setMotivo('');
+    setValidation(null);
   }
+
+  const maxQty = (() => {
+    if (!equipmentId) return 1;
+    const selected = equipments.find((eq: any) => String(eq.id) === equipmentId);
+    if (!selected) return 1;
+
+    if (eventId && validation) {
+      return validation.valido ? validation.quantidadeOk : 0;
+    }
+
+    // Sem evento: DANO e PERDA saem do disponível
+    return selected.quantidadeDisponivel;
+  })();
+
+  const labelQty = (() => {
+    if (eventId) return 'Saldo OK no Evento: ';
+    return 'Disponível: ';
+  })();
+
+  const currentBalance = (() => {
+    if (!equipmentId) return 0;
+    const selected = equipments.find((eq: any) => String(eq.id) === equipmentId);
+    if (eventId && validation) return validation.quantidadeOk;
+    return selected?.quantidadeDisponivel ?? 0;
+  })();
 
   async function handleConfirmar(id: number) {
     try {
@@ -109,19 +170,6 @@ export default function Ocorrencias() {
       addToast('error', err.response?.data?.message || 'Erro ao confirmar.');
     }
   }
-
-  async function handleCancelar(id: number) {
-    if (!confirm('Tem certeza que deseja cancelar esta ocorrência manual? O estoque será revertido.')) return;
-    try {
-      await occurrenceApi.cancelar(id);
-      load();
-      addToast('success', 'Ocorrência cancelada e estoque revertido.');
-    } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao cancelar.');
-    }
-  }
-
-
 
   function openEditModal(oc: Occurrence) {
     setEditingOccurrence(oc);
@@ -137,10 +185,8 @@ export default function Ocorrencias() {
     if (!editingOccurrence) return;
     try {
       await occurrenceApi.editar(editingOccurrence.id, {
-        quantidade: editQuantidade,
         descricao: editDescricao,
         tipo: editTipo as 'OK' | 'DANO' | 'PERDA',
-        equipmentId: Number(editEquipmentId),
       });
       setEditModalOpen(false);
       setEditingOccurrence(null);
@@ -149,6 +195,36 @@ export default function Ocorrencias() {
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao editar ocorrência.');
     }
+  }
+
+  // Filtered items
+  const filtered = items.filter((oc) => {
+    // Search filter
+    if (searchFilter) {
+      const s = searchFilter.toLowerCase();
+      const matchEquip = oc.equipment?.nome?.toLowerCase().includes(s);
+      const matchEvent = oc.event?.nome?.toLowerCase().includes(s);
+      const matchDesc = oc.descricao?.toLowerCase().includes(s);
+      if (!matchEquip && !matchEvent && !matchDesc) return false;
+    }
+    // Type filter
+    if (tipoFilter && oc.tipo !== tipoFilter) return false;
+    // Status filter
+    if (statusFilter && oc.status !== statusFilter) return false;
+    // OK auto-hide
+    if (okHideDays !== '0' && oc.tipo === 'OK') {
+      const days = Number(okHideDays);
+      const createdAt = new Date(oc.createdAt);
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      if (createdAt < cutoff) return false;
+    }
+    return true;
+  });
+
+  function handleOkHideChange(value: string) {
+    setOkHideDays(value);
+    localStorage.setItem(OK_HIDE_KEY, value);
   }
 
   if (loading) {
@@ -179,6 +255,54 @@ export default function Ocorrencias() {
         >
           <Plus size={18} /> Nova Ocorrência
         </button>
+      </div>
+
+      {/* Filters Bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+            placeholder="Buscar equipamento, evento..."
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+          />
+        </div>
+        <select
+          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+          value={tipoFilter}
+          onChange={(e) => setTipoFilter(e.target.value)}
+        >
+          <option value="">Todos os Tipos</option>
+          <option value="DANO">Dano</option>
+          <option value="PERDA">Perda</option>
+          <option value="OK">OK</option>
+        </select>
+        <select
+          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="">Todos os Status</option>
+          <option value="PENDENTE">Pendente</option>
+          <option value="BAIXADO">Baixado</option>
+          <option value="RESOLVIDO">Resolvido</option>
+        </select>
+        <div className="flex items-center gap-1.5">
+          <Clock size={14} className="text-slate-400" />
+          <select
+            className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+            value={okHideDays}
+            onChange={(e) => handleOkHideChange(e.target.value)}
+            title="Ocultar ocorrências OK mais antigas que..."
+          >
+            <option value="0">OK: Mostrar todas</option>
+            <option value="1">OK: Ocultar após 1 dia</option>
+            <option value="3">OK: Ocultar após 3 dias</option>
+            <option value="7">OK: Ocultar após 7 dias</option>
+            <option value="30">OK: Ocultar após 30 dias</option>
+          </select>
+        </div>
       </div>
 
       {/* Table */}
@@ -213,7 +337,7 @@ export default function Ocorrencias() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-              {items.map((oc) => (
+              {filtered.map((oc) => (
                 <tr
                   key={oc.id}
                   className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
@@ -251,7 +375,7 @@ export default function Ocorrencias() {
                   {isAdmin && (
                     <td className="px-6 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                        {/* Baixar - apenas PENDENTE */}
+                        {/* Confirmar - apenas PENDENTE */}
                         {oc.status === 'PENDENTE' && (
                           <button
                             onClick={() => handleConfirmar(oc.id)}
@@ -262,18 +386,7 @@ export default function Ocorrencias() {
                           </button>
                         )}
 
-                        {/* Cancelar - Apenas PENDENTE MANUAL + TIPO OK */}
-                        {['PENDENTE', 'RESOLVIDO'].includes(oc.status) && !oc.checklistItemId && (
-                          <button
-                            onClick={() => handleCancelar(oc.id)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors border border-red-200 dark:border-red-800 shadow-sm"
-                            title="Cancelar ocorrência manual"
-                          >
-                            <X size={14} /> Cancelar
-                          </button>
-                        )}
-
-                        {/* Editar - Sempre visível conforme solicitado */}
+                        {/* Editar - Sempre visível */}
                         <button
                           onClick={() => openEditModal(oc)}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors border border-slate-200 dark:border-slate-600 shadow-sm"
@@ -288,9 +401,9 @@ export default function Ocorrencias() {
               ))}
             </tbody>
           </table>
-          {items.length === 0 && (
+          {filtered.length === 0 && (
             <div className="p-8 text-center text-slate-400 dark:text-slate-500">
-              Nenhuma ocorrência registrada
+              Nenhuma ocorrência encontrada
             </div>
           )}
         </div>
@@ -316,19 +429,14 @@ export default function Ocorrencias() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
               Equipamento
             </label>
-            <select
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+            <EquipmentSearch
+              equipments={equipments}
               value={equipmentId}
-              onChange={(e) => { setEquipmentId(e.target.value); setQuantidade(1); }}
-              required
-            >
-              <option value="">Selecione...</option>
-              {equipments.map((eq: any) => (
-                <option key={eq.id} value={eq.id}>
-                  {eq.nome}
-                </option>
-              ))}
-            </select>
+              onChange={(id) => {
+                setEquipmentId(id);
+                setQuantidade(1);
+              }}
+            />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -340,7 +448,6 @@ export default function Ocorrencias() {
                 value={tipo}
                 onChange={(e) => setTipo(e.target.value)}
               >
-                <option value="OK">OK</option>
                 <option value="DANO">Dano</option>
                 <option value="PERDA">Perda</option>
               </select>
@@ -374,31 +481,20 @@ export default function Ocorrencias() {
             <input
               type="number"
               min="1"
-              max={
-                equipmentId 
-                  ? (tipo === 'OK'
-                    ? (equipments.find((eq: any) => String(eq.id) === equipmentId)?.quantidadeEmUso || 1)
-                    : (equipments.find((eq: any) => String(eq.id) === equipmentId)?.quantidadeDisponivel || 1)
-                  ) 
-                  : undefined
-              }
+              max={maxQty}
               className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
               value={quantidade}
               onChange={(e) => {
-                const selected = equipments.find((eq: any) => String(eq.id) === equipmentId);
-                const maxQty = tipo === 'OK' ? (selected?.quantidadeEmUso || 1) : (selected?.quantidadeDisponivel || 1);
                 setQuantidade(Math.min(Number(e.target.value), maxQty));
               }}
               required
             />
             {equipmentId && (
-              <p className="text-xs text-slate-400 mt-1">
-                {tipo === 'OK' ? 'Em Uso (Total no Sistema): ' : 'Disponível: '}
-                {tipo === 'OK' 
-                  ? (equipments.find((eq: any) => String(eq.id) === equipmentId)?.quantidadeEmUso ?? '?')
-                  : (equipments.find((eq: any) => String(eq.id) === equipmentId)?.quantidadeDisponivel ?? '?')
-                }
-              </p>
+              <div className="mt-1">
+                <p className={`text-xs ${validation?.valido === false ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
+                  {isValidating ? 'Validando evento...' : (validation?.valido === false ? validation.mensagem : `${labelQty}${currentBalance}`)}
+                </p>
+              </div>
             )}
           </div>
           <div>
@@ -415,7 +511,8 @@ export default function Ocorrencias() {
 
           <button
             type="submit"
-            className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
+            disabled={isValidating || (!!eventId && validation?.valido === false)}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-400 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
           >
             Registrar Ocorrência
           </button>
@@ -440,25 +537,9 @@ export default function Ocorrencias() {
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                 Equipamento
               </label>
-              {editingOccurrence.checklistItemId ? (
-                <p className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-white text-sm">
-                  {editingOccurrence.equipment?.nome || 'Equipamento'}
-                </p>
-              ) : (
-                <select
-                  className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-                  value={editEquipmentId}
-                  onChange={(e) => setEditEquipmentId(e.target.value)}
-                  required
-                >
-                  <option value="">Selecione...</option>
-                  {equipments.map((eq: any) => (
-                    <option key={eq.id} value={eq.id}>
-                      {eq.nome}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <p className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-white text-sm">
+                {editingOccurrence.equipment?.nome || 'Equipamento'}
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -477,20 +558,15 @@ export default function Ocorrencias() {
                   <option value="PERDA">Perda</option>
                 </select>
               </div>
-                {editingOccurrence.checklistItemId ? (
-                  <p className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-white text-sm">
-                    {editQuantidade}
-                  </p>
-                ) : (
-                  <input
-                    type="number"
-                    min="1"
-                    className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-                    value={editQuantidade}
-                    onChange={(e) => setEditQuantidade(Number(e.target.value))}
-                    required
-                  />
-                )}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Quantidade
+                </label>
+                <p className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-white text-sm">
+                  {editingOccurrence.quantidade}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">A quantidade não pode ser alterada após a criação</p>
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -515,4 +591,3 @@ export default function Ocorrencias() {
     </div>
   );
 }
-

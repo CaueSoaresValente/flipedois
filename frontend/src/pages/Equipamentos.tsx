@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Package, Plus, Edit3, XCircle } from 'lucide-react';
+import { Package, Plus, Edit3, XCircle, Search } from 'lucide-react';
 import { equipmentApi } from '../services/api';
 import Modal from '../components/Modal';
 import ConfirmModal from '../components/ConfirmModal';
@@ -19,6 +19,7 @@ interface Equipment {
   ativo: boolean;
   origem: string;
   fornecedor?: string;
+  setor: string;
 }
 
 export default function Equipamentos() {
@@ -36,9 +37,12 @@ export default function Equipamentos() {
   const [quantidadeTotal, setQuantidadeTotal] = useState(1);
   const [origem, setOrigem] = useState<'interno' | 'alugado'>('interno');
   const [fornecedor, setFornecedor] = useState('');
+  const [setor, setSetor] = useState<'som' | 'luz' | 'video' | 'estrutura'>('som');
 
-  // Search
+  // Filters
   const [search, setSearch] = useState('');
+  const [origemFilter, setOrigemFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -70,6 +74,7 @@ export default function Equipamentos() {
     setQuantidadeTotal(1);
     setOrigem('interno');
     setFornecedor('');
+    setSetor('som');
     setModalOpen(true);
   }
 
@@ -80,6 +85,7 @@ export default function Equipamentos() {
     setQuantidadeTotal(eq.quantidadeTotal);
     setOrigem(eq.origem as 'interno' | 'alugado');
     setFornecedor(eq.fornecedor || '');
+    setSetor((eq.setor || 'som') as any);
     setModalOpen(true);
   }
 
@@ -93,6 +99,7 @@ export default function Equipamentos() {
           quantidadeTotal,
           origem,
           fornecedor: fornecedor || undefined,
+          setor,
         });
         addToast('success', 'Equipamento atualizado com sucesso');
       } else {
@@ -102,6 +109,7 @@ export default function Equipamentos() {
           quantidadeTotal,
           origem,
           fornecedor: fornecedor || undefined,
+          setor,
         });
         addToast('success', 'Equipamento criado com sucesso');
       }
@@ -129,10 +137,16 @@ export default function Equipamentos() {
     }
   }
 
-  const filtered = equipments.filter((eq) =>
-    eq.nome.toLowerCase().includes(search.toLowerCase()) ||
-    eq.descricao.toLowerCase().includes(search.toLowerCase()),
-  );
+  const filtered = equipments.filter((eq) => {
+    if (search) {
+      const s = search.toLowerCase();
+      if (!eq.nome.toLowerCase().includes(s) && !eq.descricao.toLowerCase().includes(s)) return false;
+    }
+    if (origemFilter && eq.origem !== origemFilter) return false;
+    if (statusFilter === 'ativo' && !eq.ativo) return false;
+    if (statusFilter === 'inativo' && eq.ativo) return false;
+    return true;
+  });
 
   if (loading) {
     return (
@@ -166,13 +180,36 @@ export default function Equipamentos() {
         )}
       </div>
 
-      {/* Search */}
-      <input
-        className="w-full max-w-md p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
-        placeholder="Buscar equipamento..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
+      {/* Filters Bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+            placeholder="Buscar equipamento..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <select
+          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+          value={origemFilter}
+          onChange={(e) => setOrigemFilter(e.target.value)}
+        >
+          <option value="">Todas as Origens</option>
+          <option value="interno">Interno</option>
+          <option value="alugado">Alugado</option>
+        </select>
+        <select
+          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="">Todos os Status</option>
+          <option value="ativo">Ativo</option>
+          <option value="inativo">Inativo</option>
+        </select>
+      </div>
 
       {/* Table */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -376,6 +413,26 @@ export default function Equipamentos() {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Setor
+            </label>
+            <div className="flex gap-2 flex-wrap">
+              {(['som', 'luz', 'video', 'estrutura'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSetor(s)}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${setor === s
+                      ? 'bg-indigo-500 text-white'
+                      : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                    }`}
+                >
+                  {s === 'som' ? '🔊 Som' : s === 'luz' ? '💡 Luz' : s === 'video' ? '📹 Vídeo' : '🏗️ Estrutura'}
+                </button>
+              ))}
             </div>
           </div>
           {origem === 'alugado' && (

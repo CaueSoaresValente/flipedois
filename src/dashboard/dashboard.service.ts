@@ -39,10 +39,13 @@ export class DashboardService {
       (eq) => eq.origem === 'interno' && eq.quantidadeDisponivel <= 2,
     );
 
-    const eventos = await this.eventRepo.count();
+    const eventos = await this.eventRepo.count({
+      where: { arquivado: false },
+    });
     const eventosAtivos = await this.eventRepo
       .createQueryBuilder('event')
-      .where('event.dataFim >= :now', { now: new Date() })
+      .where('event.status = :status', { status: 'ativo' })
+      .andWhere('event.arquivado = :arq', { arq: false })
       .getCount();
 
     const checklists = await this.checklistRepo.find();

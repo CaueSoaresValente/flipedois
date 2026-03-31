@@ -62,14 +62,19 @@ export class EventService {
     return saved;
   }
 
-  async findAll(userRole?: string, page = 1, limit = 20) {
+  async findAll(userRole?: string, page = 1, limit = 20, showArchived = false) {
     const query = this.repo
       .createQueryBuilder('event')
       .leftJoinAndSelect('event.checklists', 'checklists')
       .leftJoinAndSelect('event.equipe', 'equipe')
       .orderBy('event.dataInicio', 'DESC');
 
-    // FUNCIONÁRIO: só vê eventos "liberados" para a equipe (ao menos 1 checklist liberado ou além)
+    // Filter archived events by default
+    if (!showArchived) {
+      query.andWhere('event.arquivado = :arq', { arq: false });
+    }
+
+    // FUNCIONÁRIO: só vê eventos "liberados" para a equipe
     if (userRole === 'FUNCIONARIO') {
       query.andWhere(
         `event.id IN (
@@ -323,6 +328,33 @@ export class EventService {
 
       return saved;
     });
+  }
+
+  /**
+   * ARQUIVAR EVENTO: Soft-delete - oculta da listagem sem perder dados.
+   */
+  async arquivar(id: number, userId?: number, userEmail?: string) {
+    const event = await this.repo.findOne({ where: { id } });
+    if (!event) throw new BadRequestException('Evento não encontrado.');
+    if (event.arquivado) throw new BadRequestException('Evento já está arquivado.');
+
+    event.arquivado = true;
+    event.arquivadoPor = userEmail ?? undefined;
+    event.arquivadoEm = new Date();
+
+    const saved = await this.repo.save(event);
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'ARQUIVAR',
+      'event',
+      id,
+      { arquivado: true },
+      `Evento "${event.nome}" arquivado`,
+    );
+
+    return saved;
   }
 
   async update(

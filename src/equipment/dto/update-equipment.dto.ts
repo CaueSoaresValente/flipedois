@@ -35,4 +35,8 @@ export class UpdateEquipmentDto {
   @IsOptional()
   @IsString()
   fornecedor?: string;
+
+  @IsOptional()
+  @IsIn(['som', 'luz', 'video', 'estrutura'])
+  setor?: 'som' | 'luz' | 'video' | 'estrutura';
 }

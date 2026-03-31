@@ -68,6 +68,15 @@ export class Event {
   @CreateDateColumn()
   createdAt: Date;
 
+  @Column({ default: false })
+  arquivado: boolean;
+
+  @Column({ type: 'varchar', nullable: true })
+  arquivadoPor?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  arquivadoEm?: Date;
+
   @UpdateDateColumn()
   updatedAt: Date;
 }

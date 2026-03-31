@@ -115,7 +115,7 @@ export class ChecklistItemService {
         nomeSnapshot: equipment.nome,
         descricaoSnapshot: equipment.descricao,
         quantidadePlanejada: data.quantidadePlanejada,
-        setor: data.setor,
+        setor: data.setor || (equipment as any).setor || 'som',
       });
 
       const saved = await manager.save(ChecklistItem, item);
@@ -322,6 +322,7 @@ export class ChecklistItemService {
 
         const anterior = item.quantidadeDevolvida;
         item.quantidadeDevolvida += totalReturn;
+        item.quantidadeDevolvidaOriginal = (item.quantidadeDevolvidaOriginal || 0) + totalReturn;
 
         if (observacao) {
           item.observacaoDevolucao = observacao;
@@ -814,28 +815,32 @@ export class ChecklistItemService {
         }
 
         if (tipo === 'DANO') {
-          if (quantidade <= eqLocked.quantidadeEmUso) {
-            await this.stockService.registrarDevolucaoDanificado(
+          if (occ.manual) {
+            // Manual: disponivel -= qty, danificada += qty
+            await this.stockService.registrarDanoManual(
               manager,
               eqLocked.id,
               quantidade,
             );
           } else {
-            await this.stockService.registrarDanoManual(
+            // Checklist-generated: emUso -= qty, danificada += qty
+            await this.stockService.registrarDevolucaoDanificado(
               manager,
               eqLocked.id,
               quantidade,
             );
           }
         } else if (tipo === 'PERDA') {
-          if (quantidade <= eqLocked.quantidadeEmUso) {
-            await this.stockService.registrarDevolucaoPerdido(
+          if (occ.manual) {
+            // Manual: disponivel -= qty, perdida += qty, total -= qty
+            await this.stockService.registrarPerdaManual(
               manager,
               eqLocked.id,
               quantidade,
             );
           } else {
-            await this.stockService.registrarPerdaManual(
+            // Checklist-generated: emUso -= qty, perdida += qty, total -= qty
+            await this.stockService.registrarDevolucaoPerdido(
               manager,
               eqLocked.id,
               quantidade,

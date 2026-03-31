@@ -46,6 +46,9 @@ export class EquipmentOccurrence {
 @Column({ type: 'int', nullable: true })
 checklistItemId: number | null;
 
+  @Column({ type: 'boolean', default: false })
+  manual: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 }

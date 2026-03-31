@@ -54,4 +54,26 @@ export class UserService {
       totalPages: Math.ceil(total / limit),
     };
   }
+
+  async desativar(id: number, requestingUserId: number) {
+    if (id === requestingUserId) {
+      throw new BadRequestException('Você não pode desativar sua própria conta.');
+    }
+
+    const user = await this.repo.findOne({ where: { id } });
+    if (!user) throw new BadRequestException('Usuário não encontrado.');
+    if (!user.ativo) throw new BadRequestException('Usuário já está desativado.');
+
+    user.ativo = false;
+    return this.repo.save(user);
+  }
+
+  async reativar(id: number) {
+    const user = await this.repo.findOne({ where: { id } });
+    if (!user) throw new BadRequestException('Usuário não encontrado.');
+    if (user.ativo) throw new BadRequestException('Usuário já está ativo.');
+
+    user.ativo = true;
+    return this.repo.save(user);
+  }
 }

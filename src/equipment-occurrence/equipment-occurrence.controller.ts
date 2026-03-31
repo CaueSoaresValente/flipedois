@@ -39,6 +39,16 @@ export class EquipmentOccurrenceController {
   cancelar(@Param('id', ParseIntPipe) id: number) {
     return this.service.cancelar(id);
   }
+
+  @Roles('ADMIN')
+  @Get('validar-evento')
+  validarEvento(
+    @Query('eventId', ParseIntPipe) eventId: number,
+    @Query('equipmentId', ParseIntPipe) equipmentId: number,
+  ) {
+    return this.service.validarEventoEquipamento(eventId, equipmentId);
+  }
+
   @Roles('ADMIN')
   @Patch(':id')
   editar(

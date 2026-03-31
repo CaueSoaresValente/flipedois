@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Calendar, Plus, Users as UsersIcon, Edit3, CheckCircle, CheckCircle2, XCircle, Ban, Copy, ChevronDown, ChevronUp, PackageCheck, RotateCcw, ClipboardList, X, AlertCircle } from 'lucide-react';
+import { Calendar, Plus, Users as UsersIcon, Edit3, CheckCircle, CheckCircle2, XCircle, Ban, Copy, ChevronDown, ChevronUp, PackageCheck, RotateCcw, ClipboardList, X, AlertCircle, Search, Trash2, Archive } from 'lucide-react';
 import { eventApi, checklistApi, checklistItemApi, equipmentApi } from '../services/api';
+import * as XLSX from 'xlsx';
 import Modal from '../components/Modal';
 import ConfirmModal from '../components/ConfirmModal';
 import StatusBadge from '../components/StatusBadge';
@@ -139,6 +140,12 @@ export default function Eventos() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
+  // Filters
+  const [searchFilter, setSearchFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState<EventItem | null>(null);
+
   // Create form
   const [nome, setNome] = useState('');
   const [cliente, setCliente] = useState('');
@@ -163,7 +170,7 @@ export default function Eventos() {
   async function load() {
     try {
       const [evRes, clRes] = await Promise.all([
-        eventApi.getAll({ page, limit }),
+        eventApi.getAll({ page, limit, arquivados: showArchived }),
         checklistApi.getAll({ page: 1, limit: 1000 }),
       ]);
       setEvents(evRes.data.data);
@@ -179,7 +186,7 @@ export default function Eventos() {
 
   useEffect(() => {
     load();
-  }, [page, limit]);
+  }, [page, limit, showArchived]);
 
   // Deep-link: auto-open event checklist when navigating to /eventos/:eventId
   useEffect(() => {
@@ -260,35 +267,55 @@ export default function Eventos() {
     try {
       const r = await checklistApi.getOne(checklistId);
       const cl = r.data as ChecklistData;
-      const linhas = [
-        ['Checklist', cl.nome],
-        ['Status', cl.status],
-        [],
-        ['Equipamento', 'Setor', 'Planejado', 'Separado', 'Devolvido', 'OK', 'Quebrado', 'Perdido'],
-        ...(cl.items ?? []).map((i) => [
-          i.nomeSnapshot,
-          i.setor,
-          String(i.quantidadePlanejada ?? 0),
-          String(i.quantidadeSeparada ?? 0),
-          String(i.quantidadeDevolvida ?? 0),
-          String(i.quantidadeOk ?? 0),
-          String(i.quantidadeQuebrada ?? 0),
-          String(i.quantidadePerdida ?? 0),
-        ]),
-      ]
-        .map((row) => row.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';'))
-        .join('\n');
 
-      const blob = new Blob([linhas], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `checklist-${cl.id}-${cl.nome}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      addToast('success', 'Checklist baixado (CSV)');
+      // Build data rows
+      const headers = ['Equipamento', 'Setor', 'Planejado', 'Separado', 'Devolvido', 'OK', 'Quebrado', 'Perdido'];
+      const rows = (cl.items ?? []).map((i) => [
+        i.nomeSnapshot,
+        i.setor,
+        i.quantidadePlanejada ?? 0,
+        i.quantidadeSeparada ?? 0,
+        i.quantidadeDevolvida ?? 0,
+        i.quantidadeOk ?? 0,
+        i.quantidadeQuebrada ?? 0,
+        i.quantidadePerdida ?? 0,
+      ]);
+
+      // Create workbook and worksheet
+      const wb = XLSX.utils.book_new();
+
+      // Title rows
+      const wsData = [
+        [`Checklist: ${cl.nome}`],
+        [`Status: ${cl.status}`],
+        [],
+        headers,
+        ...rows,
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+      // Auto-width columns
+      const colWidths = headers.map((h, i) => {
+        const maxLen = Math.max(
+          h.length,
+          ...rows.map((r) => String(r[i] ?? '').length)
+        );
+        return { wch: Math.max(maxLen + 2, 12) };
+      });
+      ws['!cols'] = colWidths;
+
+      // Merge title row across all columns
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, cl.nome.substring(0, 31));
+
+      // Download
+      XLSX.writeFile(wb, `checklist-${cl.id}-${cl.nome}.xlsx`);
+      addToast('success', 'Checklist baixado (Excel)');
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao baixar checklist');
     }
@@ -636,6 +663,18 @@ export default function Eventos() {
     return ev.checklists.every((cl) => ['concluido', 'cancelado'].includes(cl.status));
   }
 
+  async function handleArquivar() {
+    if (!confirmArchive) return;
+    try {
+      await eventApi.arquivar(confirmArchive.id);
+      addToast('success', `Evento "${confirmArchive.nome}" arquivado.`);
+      setConfirmArchive(null);
+      load();
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao arquivar evento');
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -668,9 +707,49 @@ export default function Eventos() {
         )}
       </div>
 
+      {/* Filters Bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+            placeholder="Buscar evento, cliente, local..."
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+          />
+        </div>
+        <select
+          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="">Todos os Status</option>
+          <option value="ativo">Em andamento</option>
+          <option value="finalizado">Finalizado</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
+        <button
+          onClick={() => setShowArchived(!showArchived)}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${showArchived
+            ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700'
+            : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600'
+          }`}
+        >
+          <Archive size={14} />
+          {showArchived ? 'Ver Ativos' : 'Lixeira'}
+        </button>
+      </div>
+
       {/* Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {events.map((ev) => (
+        {events.filter((ev) => {
+          if (searchFilter) {
+            const s = searchFilter.toLowerCase();
+            if (!ev.nome.toLowerCase().includes(s) && !ev.cliente.toLowerCase().includes(s) && !ev.local.toLowerCase().includes(s)) return false;
+          }
+          if (statusFilter && ev.status !== statusFilter) return false;
+          return true;
+        }).map((ev) => (
           <div
             key={ev.id}
             className={`bg-white dark:bg-slate-800 rounded-xl border p-5 hover:shadow-lg transition-shadow ${
@@ -726,6 +805,15 @@ export default function Eventos() {
                       <Ban size={13} /> Cancelar
                     </button>
                   </>
+                )}
+                {isAdmin && (
+                  <button
+                    onClick={() => setConfirmArchive(ev)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    title="Arquivar evento (mover para lixeira)"
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 )}
                 <button
                   onClick={() => openTeam(ev)}
@@ -1138,7 +1226,7 @@ export default function Eventos() {
                   onClick={() => handleBaixarChecklist(checklistModal.id)}
                   className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors font-medium"
                 >
-                  Baixar CSV
+                  Baixar Excel
                 </button>
                 {isAdmin && checklistModal.status === 'rascunho' && (checklistModal.items?.length ?? 0) > 0 && (
                   <button
@@ -1309,7 +1397,7 @@ export default function Eventos() {
 
                     let statusColor = 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20';
                     let statusIcon = '🟥';
-                    let statusText = 'NÍO SEPARADO';
+                    let statusText = 'NÃO SEPARADO';
 
                     if (isSeparated) {
                       statusColor = 'border-emerald-200 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20';
@@ -1775,6 +1863,17 @@ export default function Eventos() {
           </button>
         </form>
       </Modal>
+
+      {/* Archive Confirm Modal */}
+      <ConfirmModal
+        open={confirmArchive !== null}
+        onClose={() => setConfirmArchive(null)}
+        onConfirm={handleArquivar}
+        title="Arquivar Evento"
+        message={`Tem certeza que deseja arquivar o evento "${confirmArchive?.nome}"? Ele será movido para a lixeira e não aparecerá mais na lista de eventos ativos.`}
+        confirmLabel="Arquivar"
+        type="danger"
+      />
     </div>
   );
 }

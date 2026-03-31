@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Users, Plus, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Users, Plus, ShieldCheck, ShieldAlert, Search, XCircle, RefreshCw } from 'lucide-react';
 import { userApi } from '../services/api';
 import Modal from '../components/Modal';
+import ConfirmModal from '../components/ConfirmModal';
 import { useToast } from '../contexts/ToastContext';
+import Pagination from '../components/Pagination';
 
 interface UserItem {
   id: number;
@@ -18,20 +20,33 @@ export default function Usuarios() {
   const [modalOpen, setModalOpen] = useState(false);
   const { addToast } = useToast();
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
+  // Filters
+  const [searchFilter, setSearchFilter] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+
   // Form
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [role, setRole] = useState('FUNCIONARIO');
+  const [confirmAction, setConfirmAction] = useState<{ user: UserItem; action: 'desativar' | 'reativar' } | null>(null);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [page, limit]);
 
   async function load() {
     try {
-      const res = await userApi.getAll();
-      setUsers(res.data);
+      const res = await userApi.getAll({ page, limit });
+      setUsers(res.data.data);
+      setTotal(res.data.total);
+      setTotalPages(res.data.totalPages);
     } catch (err) {
       console.error(err);
     } finally {
@@ -55,6 +70,33 @@ export default function Usuarios() {
     }
   }
 
+  // Filtered users
+  const filtered = users.filter((u) => {
+    if (searchFilter) {
+      const s = searchFilter.toLowerCase();
+      if (!u.nome.toLowerCase().includes(s) && !u.email.toLowerCase().includes(s)) return false;
+    }
+    if (roleFilter && u.role !== roleFilter) return false;
+    return true;
+  });
+
+  async function handleToggleAtivo() {
+    if (!confirmAction) return;
+    try {
+      if (confirmAction.action === 'desativar') {
+        await userApi.desativar(confirmAction.user.id);
+        addToast('success', `Usuário ${confirmAction.user.nome} desativado`);
+      } else {
+        await userApi.reativar(confirmAction.user.id);
+        addToast('success', `Usuário ${confirmAction.user.nome} reativado`);
+      }
+      setConfirmAction(null);
+      load();
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro na operação');
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -73,7 +115,7 @@ export default function Usuarios() {
               Usuários
             </h1>
             <p className="text-sm text-slate-500">
-              {users.length} usuário(s)
+              {total} usuário(s)
             </p>
           </div>
         </div>
@@ -83,6 +125,28 @@ export default function Usuarios() {
         >
           <Plus size={18} /> Novo Usuário
         </button>
+      </div>
+
+      {/* Filters Bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+            placeholder="Buscar por nome ou email..."
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+          />
+        </div>
+        <select
+          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value)}
+        >
+          <option value="">Todos os Papéis</option>
+          <option value="ADMIN">Admin</option>
+          <option value="FUNCIONARIO">Funcionário</option>
+        </select>
       </div>
 
       {/* Table */}
@@ -102,10 +166,13 @@ export default function Usuarios() {
               <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
                 Status
               </th>
+              <th className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase">
+                Ações
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {users.map((u) => (
+            {filtered.map((u) => (
               <tr
                 key={u.id}
                 className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
@@ -153,16 +220,60 @@ export default function Usuarios() {
                     {u.ativo ? 'Ativo' : 'Inativo'}
                   </span>
                 </td>
+                <td className="px-6 py-3 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    {u.ativo ? (
+                      <button
+                        onClick={() => setConfirmAction({ user: u, action: 'desativar' })}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors border border-red-200 dark:border-red-700"
+                        title="Desativar usuário"
+                      >
+                        <XCircle size={14} /> Desativar
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmAction({ user: u, action: 'reativar' })}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors border border-emerald-200 dark:border-emerald-700"
+                        title="Reativar usuário"
+                      >
+                        <RefreshCw size={14} /> Reativar
+                      </button>
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {users.length === 0 && (
+        {filtered.length === 0 && (
           <div className="p-6 text-center text-slate-400 text-sm">
-            Nenhum usuário cadastrado
+            Nenhum usuário encontrado
           </div>
         )}
       </div>
+
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        limit={limit}
+        onPageChange={setPage}
+        onLimitChange={(newLimit) => { setLimit(newLimit); setPage(1); }}
+      />
+
+      {/* Confirm Deactivate/Reactivate Modal */}
+      <ConfirmModal
+        open={confirmAction !== null}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={handleToggleAtivo}
+        title={confirmAction?.action === 'desativar' ? 'Desativar Usuário' : 'Reativar Usuário'}
+        message={confirmAction?.action === 'desativar'
+          ? `Tem certeza que deseja desativar "${confirmAction?.user.nome}"? O usuário não poderá mais acessar o sistema.`
+          : `Tem certeza que deseja reativar "${confirmAction?.user.nome}"?`
+        }
+        confirmLabel={confirmAction?.action === 'desativar' ? 'Desativar' : 'Reativar'}
+        type={confirmAction?.action === 'desativar' ? 'danger' : 'success'}
+      />
 
       {/* Create Modal */}
       <Modal

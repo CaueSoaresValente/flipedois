@@ -38,11 +38,13 @@ export class EventController {
     @Req() req: any,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('arquivados') arquivados?: string,
   ) {
     return this.service.findAll(
       req.user?.role,
       page ? Number(page) : 1,
       limit ? Number(limit) : 20,
+      arquivados === 'true',
     );
   }
 
@@ -111,5 +113,11 @@ export class EventController {
   @Post(':id/clonar')
   clonar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.service.clonar(id, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id/arquivar')
+  arquivar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.arquivar(id, req.user.sub, req.user.email);
   }
 }
