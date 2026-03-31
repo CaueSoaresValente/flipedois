@@ -8,6 +8,7 @@ import EquipmentSearch from '../components/EquipmentSearch';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useNavigate, useParams } from 'react-router-dom';
+import Pagination from '../components/Pagination';
 
 interface EventTeam {
   id: number;
@@ -72,7 +73,7 @@ interface EquipmentOption {
 function QuantityStepper({ value, onChange, min = 0, max }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
   return (
     <div className="flex items-center gap-2">
-      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center">âˆ’</button>
+      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center">-</button>
       <span className="text-xl font-bold text-slate-800 dark:text-white w-10 text-center">{value}</span>
       <button type="button" onClick={() => onChange(max !== undefined ? Math.min(max, value + 1) : value + 1)} className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center">+</button>
     </div>
@@ -114,7 +115,7 @@ export default function Eventos() {
   const [separateModal, setSeparateModal] = useState<ChecklistItemData | null>(null);
   const [separateQty, setSeparateQty] = useState(1);
 
-  // Return modal — mixed return (OK + Damaged + Lost per item)
+  // Return modal - mixed return (OK + Damaged + Lost per item)
   const [returnModal, setReturnModal] = useState<ChecklistItemData | null>(null);
   const [returnOk, setReturnOk] = useState(0);
   const [returnDanificado, setReturnDanificado] = useState(0);
@@ -132,6 +133,12 @@ export default function Eventos() {
   const [renameValue, setRenameValue] = useState('');
   const [lowStockNames, setLowStockNames] = useState<string[]>([]);
 
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   // Create form
   const [nome, setNome] = useState('');
   const [cliente, setCliente] = useState('');
@@ -139,7 +146,7 @@ export default function Eventos() {
   const [dataInicio, setDataInicio] = useState('');
   const [dataFim, setDataFim] = useState('');
   const [observacoes, setObservacoes] = useState('');
-  const [checklistId, setChecklistId] = useState('');
+
 
   // Edit form
   const [editNome, setEditNome] = useState('');
@@ -153,24 +160,26 @@ export default function Eventos() {
   const [teamNome, setTeamNome] = useState('');
   const [teamFuncao, setTeamFuncao] = useState('montagem');
 
-  useEffect(() => {
-    load();
-  }, []);
-
   async function load() {
     try {
       const [evRes, clRes] = await Promise.all([
-        eventApi.getAll(),
-        checklistApi.getAll(),
+        eventApi.getAll({ page, limit }),
+        checklistApi.getAll({ page: 1, limit: 1000 }),
       ]);
-      setEvents(evRes.data);
-      setChecklists(clRes.data);
+      setEvents(evRes.data.data);
+      setTotal(evRes.data.total);
+      setTotalPages(evRes.data.totalPages);
+      setChecklists(clRes.data.data);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    load();
+  }, [page, limit]);
 
   // Deep-link: auto-open event checklist when navigating to /eventos/:eventId
   useEffect(() => {
@@ -186,10 +195,10 @@ export default function Eventos() {
     try {
       const [clRes, eqRes] = await Promise.all([
         checklistApi.getOne(checklistId),
-        equipmentApi.getAll(),
+        equipmentApi.getAll({ page: 1, limit: 1000 }),
       ]);
       setChecklistModal(clRes.data);
-      setEquipments(eqRes.data);
+      setEquipments(eqRes.data.data);
       setChecklistParentEventId(eventId ?? null);
       setModalChecklist(true);
     } catch (err: any) {
@@ -375,7 +384,7 @@ export default function Eventos() {
     }
   }
 
-  // Return handler — MIXED: OK + Damaged + Lost per item
+  // Return handler - MIXED: OK + Damaged + Lost per item
   async function handleDevolver() {
     if (!returnModal) return;
     const totalReturn = returnOk + returnDanificado + returnPerdido;
@@ -474,7 +483,7 @@ export default function Eventos() {
         dataInicio,
         dataFim,
         observacoes,
-        checklistId: checklistId ? Number(checklistId) : undefined,
+
       });
       setModalCreate(false);
       resetForm();
@@ -511,7 +520,7 @@ export default function Eventos() {
     setDataInicio('');
     setDataFim('');
     setObservacoes('');
-    setChecklistId('');
+
   }
 
   function openEdit(ev: EventItem) {
@@ -595,9 +604,9 @@ export default function Eventos() {
         funcao: teamFuncao,
       });
       setTeamNome('');
-      const res = await eventApi.getAll();
-      setEvents(res.data);
-      const updated = res.data.find((ev: EventItem) => ev.id === selectedEvent.id);
+      const res = await eventApi.getAll({ page, limit });
+      setEvents(res.data.data);
+      const updated = res.data.data.find((ev: EventItem) => ev.id === selectedEvent.id);
       if (updated) setSelectedEvent(updated);
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao adicionar membro');
@@ -607,10 +616,10 @@ export default function Eventos() {
   async function handleRemoveTeam(memberId: number) {
     try {
       await eventApi.removeTeamMember(memberId);
-      const res = await eventApi.getAll();
-      setEvents(res.data);
+      const res = await eventApi.getAll({ page, limit });
+      setEvents(res.data.data);
       if (selectedEvent) {
-        const updated = res.data.find((ev: EventItem) => ev.id === selectedEvent.id);
+        const updated = res.data.data.find((ev: EventItem) => ev.id === selectedEvent.id);
         if (updated) setSelectedEvent(updated);
       }
     } catch (err: any) {
@@ -645,7 +654,7 @@ export default function Eventos() {
               Eventos
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              {events.length} evento(s)
+              {total} evento(s)
             </p>
           </div>
         </div>
@@ -678,11 +687,11 @@ export default function Eventos() {
                   </h3>
                   {ev.status === 'finalizado' ? (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-medium">
-                      âœ" Finalizado
+                      ✓ Finalizado
                     </span>
                   ) : ev.status === 'cancelado' ? (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-medium">
-                      âœ• Cancelado
+                      ✖ Cancelado
                     </span>
                   ) : (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 font-medium">
@@ -819,6 +828,15 @@ export default function Eventos() {
         ))}
       </div>
 
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        limit={limit}
+        onPageChange={setPage}
+        onLimitChange={(newLimit) => { setLimit(newLimit); setPage(1); }}
+      />
+
       {events.length === 0 && (
         <div className="text-center text-slate-400 py-12">
           Nenhum evento cadastrado
@@ -841,7 +859,7 @@ export default function Eventos() {
               value={nome}
               onChange={(e) => setNome(e.target.value)}
               required
-              placeholder="Ex: Festival de Verao 2025"
+              placeholder="Ex: Festival de Verão 2025"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -871,7 +889,7 @@ export default function Eventos() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Data Inicio
+                Data Início
               </label>
               <input
                 type="datetime-local"
@@ -894,26 +912,10 @@ export default function Eventos() {
               />
             </div>
           </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Vincular Checklist (opcional)
-            </label>
-            <select
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
-              value={checklistId}
-              onChange={(e) => setChecklistId(e.target.value)}
-            >
-              <option value="">Nenhum</option>
-              {checklists.filter((cl) => cl.status === 'rascunho' && !cl.eventId).map((cl) => (
-                <option key={cl.id} value={cl.id}>
-                  {cl.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Observacoes
+              Observações
             </label>
             <textarea
               className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
@@ -935,7 +937,7 @@ export default function Eventos() {
       <Modal
         open={modalEdit}
         onClose={() => setModalEdit(false)}
-        title={`Editar Evento â€" ${selectedEvent?.nome ?? ''}`}
+        title={`Editar Evento - ${selectedEvent?.nome ?? ''}`}
       >
         <form onSubmit={handleEdit} className="space-y-4">
           <div>
@@ -971,7 +973,7 @@ export default function Eventos() {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data Inicio</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data Início</label>
               <input
                 type="datetime-local"
                 className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
@@ -992,7 +994,7 @@ export default function Eventos() {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Observacoes</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Observações</label>
             <textarea
               className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
               rows={3}
@@ -1004,7 +1006,7 @@ export default function Eventos() {
             type="submit"
             className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
           >
-            Salvar Alteracoes
+            Salvar Alterações
           </button>
         </form>
       </Modal>
@@ -1015,7 +1017,7 @@ export default function Eventos() {
         onClose={() => setConfirmFinalizar(null)}
         onConfirm={handleFinalizar}
         title="Finalizar Evento"
-        message={`Deseja finalizar o evento "${confirmFinalizar?.nome}"? Esta acao e irreversivel e indica que todos os equipamentos foram devolvidos e o evento foi concluido.`}
+        message={`Deseja finalizar o evento "${confirmFinalizar?.nome}"? Esta ação é irreversível e indica que todos os equipamentos foram devolvidos e o evento foi concluído.`}
         confirmLabel="Finalizar"
         type="success"
       />
@@ -1024,11 +1026,11 @@ export default function Eventos() {
       <Modal
         open={confirmCancelar !== null}
         onClose={() => setConfirmCancelar(null)}
-        title={`Cancelar Evento â€" ${confirmCancelar?.nome ?? ''}`}
+        title={`Cancelar Evento - ${confirmCancelar?.nome ?? ''}`}
       >
         <div className="space-y-4">
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Esta acao ira cancelar o evento e reverter todas as reservas de estoque ativas.
+            Esta ação irá cancelar o evento e reverter todas as reservas de estoque ativas.
           </p>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -1057,7 +1059,7 @@ export default function Eventos() {
       <Modal
         open={modalTeam}
         onClose={() => setModalTeam(false)}
-        title={`Equipe â€" ${selectedEvent?.nome ?? ''}`}
+        title={`Equipe - ${selectedEvent?.nome ?? ''}`}
       >
         <div className="space-y-4">
           {isAdmin && selectedEvent?.status !== 'finalizado' && (
@@ -1077,7 +1079,7 @@ export default function Eventos() {
                 onChange={(e) => setTeamFuncao(e.target.value)}
               >
                 <option value="montagem">Montagem</option>
-                <option value="operacao">Operacao</option>
+                <option value="operacao">Operação</option>
                 <option value="desmontagem">Desmontagem</option>
               </select>
               <button
@@ -1122,7 +1124,7 @@ export default function Eventos() {
           setChecklistModal(null);
           setEquipments([]);
         }}
-        title={`Checklist â€" ${checklistModal?.nome ?? ''}`}
+        title={`Checklist - ${checklistModal?.nome ?? ''}`}
         maxWidth="max-w-5xl"
       >
         {checklistModal && (
@@ -1144,7 +1146,7 @@ export default function Eventos() {
                     onClick={handleLiberarChecklist}
                     className="text-xs px-3 py-1.5 rounded-lg bg-green-500 hover:bg-green-600 text-white transition-colors font-medium"
                   >
-                    âœ" Liberar Checklist
+                    ✓ Liberar Checklist
                   </button>
                 )}
                 {isAdmin && ['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal.status) && (
@@ -1153,7 +1155,7 @@ export default function Eventos() {
                     onClick={handleCancelarChecklist}
                     className="text-xs px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors font-medium"
                   >
-                    âœ• Cancelar
+                    ✖ Cancelar
                   </button>
                 )}
                 {isAdmin && checklistModal.status === 'cancelado' && (
@@ -1215,7 +1217,7 @@ export default function Eventos() {
               </div>
             )}
 
-            {/* Separation progress for employee — Enhanced UI */}
+            {/* Separation progress for employee - Enhanced UI */}
             {!isAdmin && checklistModal.status === 'liberado' && (
               <div className="space-y-4">
                 {/* Progress bar and stats */}
@@ -1269,7 +1271,7 @@ export default function Eventos() {
                     </div>
                   )}
 
-                  {/* Finalize button — only when all items separated */}
+                  {/* Finalize button - only when all items separated */}
                   {pendingItems.length === 0 ? (
                     <button
                       onClick={async () => {
@@ -1287,20 +1289,27 @@ export default function Eventos() {
                       className="w-full bg-red-500 text-white py-3 rounded-xl text-sm font-bold opacity-75 cursor-not-allowed flex items-center justify-center gap-2 mt-3"
                     >
                       <AlertCircle size={18} />
-                      Não é possível finalizar — {pendingItems.length} itens pendentes
+                      Não é possível finalizar - {pendingItems.length} itens pendentes
                     </button>
                   )}
                 </div>
 
                 {/* Visual status cards per item */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {(checklistModal.items ?? []).map((item) => {
+                  {[...(checklistModal.items ?? [])]
+                    .sort((a, b) => {
+                      const aPending = a.quantidadeSeparada < a.quantidadePlanejada ? 0 : 1;
+                      const bPending = b.quantidadeSeparada < b.quantidadePlanejada ? 0 : 1;
+                      if (aPending !== bPending) return aPending - bPending;
+                      return (a.nomeSnapshot ?? '').localeCompare(b.nomeSnapshot ?? '');
+                    })
+                    .map((item) => {
                     const isSeparated = item.quantidadeSeparada >= item.quantidadePlanejada;
                     const progress = (item.quantidadeSeparada / item.quantidadePlanejada) * 100;
 
                     let statusColor = 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20';
                     let statusIcon = '🟥';
-                    let statusText = 'NÃO SEPARADO';
+                    let statusText = 'NÍO SEPARADO';
 
                     if (isSeparated) {
                       statusColor = 'border-emerald-200 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20';
@@ -1373,11 +1382,18 @@ export default function Eventos() {
                     <th className="text-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300 whitespace-nowrap">Devol.</th>
                     <th className="text-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300 whitespace-nowrap">OK/Qb/Pd</th>
                     <th className="text-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300">Status</th>
-                    <th className="px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300">Acoes</th>
+                    <th className="px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                  {(checklistModal.items ?? []).map((item) => {
+                  {[...(checklistModal.items ?? [])]
+                    .sort((a, b) => {
+                      const aPending = a.quantidadeSeparada < a.quantidadePlanejada ? 0 : 1;
+                      const bPending = b.quantidadeSeparada < b.quantidadePlanejada ? 0 : 1;
+                      if (aPending !== bPending) return aPending - bPending;
+                      return (a.nomeSnapshot ?? '').localeCompare(b.nomeSnapshot ?? '');
+                    })
+                    .map((item) => {
                     const fullySeparated = item.quantidadeSeparada >= item.quantidadePlanejada;
                     const fullyReturned = item.quantidadeDevolvida >= item.quantidadeSeparada && item.quantidadeSeparada > 0;
                     const isPending = !isAdmin && ['em_evento', 'pendente_devolucao'].includes(checklistModal.status) && item.quantidadeDevolvida < item.quantidadeSeparada;
@@ -1424,7 +1440,7 @@ export default function Eventos() {
                               <span className="bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadePerdida}?</span>
                             )}
                             {(item.quantidadeOk ?? 0) === 0 && (item.quantidadeQuebrada ?? 0) === 0 && (item.quantidadePerdida ?? 0) === 0 && (
-                              <span className="text-slate-400">—</span>
+                              <span className="text-slate-400">-</span>
                             )}
                           </div>
                         </td>
@@ -1519,9 +1535,9 @@ export default function Eventos() {
               >
                 <option value="som">Som</option>
                 <option value="luz">Luz</option>
-                <option value="video">Video</option>
+                <option value="video">Vídeo</option>
                 <option value="estrutura">Estrutura</option>
-                <option value="comunicacao">Comunicacao</option>
+                <option value="comunicacao">Comunicação</option>
                 <option value="outros">Outros</option>
               </select>
             </div>
@@ -1540,7 +1556,7 @@ export default function Eventos() {
       <Modal
         open={editQtyItem !== null}
         onClose={() => setEditQtyItem(null)}
-        title={`Editar quantidade â€" ${editQtyItem?.nomeSnapshot ?? ''}`}
+        title={`Editar quantidade - ${editQtyItem?.nomeSnapshot ?? ''}`}
       >
         {editQtyItem && (
           <div className="space-y-4">
@@ -1561,11 +1577,11 @@ export default function Eventos() {
         )}
       </Modal>
 
-      {/* Separation Modal â€" stepper + progress */}
+      {/* Separation Modal - stepper + progress */}
       <Modal
         open={separateModal !== null}
         onClose={() => { setSeparateModal(null); setSeparateQty(1); }}
-        title={`Separar â€" ${separateModal?.nomeSnapshot ?? ''}`}
+        title={`Separar - ${separateModal?.nomeSnapshot ?? ''}`}
       >
         <div className="space-y-5">
           <div className="grid grid-cols-3 gap-3 text-center">
@@ -1598,16 +1614,16 @@ export default function Eventos() {
             disabled={separateQty <= 0}
             className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
           >
-            Confirmar Separacao de {separateQty} unidade(s)
+            Confirmar Separação de {separateQty} unidade(s)
           </button>
         </div>
       </Modal>
 
-      {/* 🔴 EMPLOYEE Hybrid Return Modal — OK auto / Danificado-Perdido pending */}
+      {/* 🔴 EMPLOYEE Hybrid Return Modal - OK auto / Danificado-Perdido pending */}
       <Modal
         open={returnModal !== null}
         onClose={() => { setReturnModal(null); setReturnOk(0); setReturnDanificado(0); setReturnPerdido(0); setReturnObservation(''); }}
-        title={`Devolver — ${returnModal?.nomeSnapshot ?? ''}`}
+        title={`Devolver - ${returnModal?.nomeSnapshot ?? ''}`}
       >
         {returnModal && (() => {
           const remaining = returnModal.quantidadeSeparada - returnModal.quantidadeDevolvida;
@@ -1632,9 +1648,9 @@ export default function Eventos() {
               {/* 🔴 MIXED RETURN: 3 separate quantity steppers */}
               <div className="space-y-3">
                 {[
-                  { key: 'ok' as const, label: '✅ OK — Bom estado', desc: 'Estoque atualizado automaticamente', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10', value: returnOk, setter: setReturnOk },
-                  { key: 'danificado' as const, label: '⚠️ Danificado — Com defeito', desc: 'Aguardará confirmação do admin', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10', value: returnDanificado, setter: setReturnDanificado },
-                  { key: 'perdido' as const, label: '❌ Perdido — Extraviado', desc: 'Aguardará confirmação do admin', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10', value: returnPerdido, setter: setReturnPerdido },
+                  { key: 'ok' as const, label: '✅ OK - Bom estado', desc: 'Estoque atualizado automaticamente', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10', value: returnOk, setter: setReturnOk },
+                  { key: 'danificado' as const, label: '⚠️ Danificado - Com defeito', desc: 'Aguardará confirmação do admin', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10', value: returnDanificado, setter: setReturnDanificado },
+                  { key: 'perdido' as const, label: '❌ Perdido - Extraviado', desc: 'Aguardará confirmação do admin', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10', value: returnPerdido, setter: setReturnPerdido },
                 ].map(({ key, label, desc, color, value, setter }) => (
                   <div key={key} className={`rounded-xl border p-3 ${color}`}>
                     <div className="flex items-center justify-between">
@@ -1705,7 +1721,7 @@ export default function Eventos() {
       <Modal
         open={renameModal !== null}
         onClose={() => { setRenameModal(null); setRenameValue(''); }}
-        title={`Renomear Checklist â€" ${renameModal?.nome ?? ''}`}
+        title={`Renomear Checklist - ${renameModal?.nome ?? ''}`}
       >
         <form onSubmit={handleRenameChecklist} className="space-y-4">
           <div>

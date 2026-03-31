@@ -8,4 +8,12 @@ export class UpdateOccurrenceDto {
   @IsOptional()
   @IsString()
   descricao?: string;
+
+  @IsOptional()
+  @IsString()
+  tipo?: 'OK' | 'DANO' | 'PERDA';
+
+  @IsOptional()
+  @IsNumber()
+  equipmentId?: number;
 }

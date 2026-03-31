@@ -17,9 +17,5 @@ export class CreateOccurrenceDto {
 
   @IsOptional()
   @IsString()
-  tipo?: 'DANO' | 'PERDA' | 'AJUSTE';
-
-  @IsOptional()
-  @IsString()
-  motivo?: string;
+  tipo?: 'OK' | 'DANO' | 'PERDA';
 }

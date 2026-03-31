@@ -136,7 +136,7 @@ export default function Logs() {
                                             {new Date(log.createdAt).toLocaleString('pt-BR')}
                                         </td>
                                         <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-                                            {log.userEmail || '—'}
+                                            {log.userEmail || '-'}
                                         </td>
                                         <td className="px-4 py-3">
                                             <span
@@ -151,7 +151,7 @@ export default function Logs() {
                                             {log.entityId ? ` #${log.entityId}` : ''}
                                         </td>
                                         <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300 max-w-xs truncate">
-                                            {log.description || '—'}
+                                            {log.description || '-'}
                                         </td>
                                     </tr>
                                 ))}
@@ -170,7 +170,7 @@ export default function Logs() {
             {total > limit && (
                 <div className="flex items-center justify-between">
                     <p className="text-sm text-slate-500">
-                        Mostrando {page * limit + 1}–{Math.min((page + 1) * limit, total)} de {total}
+                        Mostrando {page * limit + 1}-{Math.min((page + 1) * limit, total)} de {total}
                     </p>
                     <div className="flex gap-2">
                         <button

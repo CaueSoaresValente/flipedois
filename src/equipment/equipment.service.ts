@@ -53,11 +53,21 @@ export class EquipmentService {
     return saved;
   }
 
-  async findAll() {
-    return this.repository.find({
+  async findAll(page = 1, limit = 20) {
+    const [data, total] = await this.repository.findAndCount({
       where: { ativo: true },
       order: { nome: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   // Fix #1: Search endpoint for autocomplete

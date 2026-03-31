@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { EquipmentOccurrence } from '../equipment-occurrence/equipment-occurrence.entity';
 import { Checklist } from './checklist.entity';
 import { ChecklistItem } from '../checklist-item/checklist-item.entity';
 import { Equipment } from '../equipment/equipment.entity';
@@ -84,12 +85,13 @@ export class ChecklistService {
     return saved;
   }
 
-  async findAll(userRole?: string) {
+  async findAll(userRole?: string, page = 1, limit = 20) {
     const query = this.checklistRepository
       .createQueryBuilder('checklist')
       .leftJoinAndSelect('checklist.items', 'items')
       .leftJoinAndSelect('checklist.event', 'event')
-      .orderBy('checklist.createdAt', 'DESC');
+      .orderBy('checklist.createdAt', 'DESC')
+      .addOrderBy('items.nomeSnapshot', 'ASC');
 
     // FUNCIONÁRIO só vê checklists liberados e além
     if (userRole === 'FUNCIONARIO') {
@@ -98,14 +100,27 @@ export class ChecklistService {
       });
     }
 
-    return query.getMany();
+    query.skip((page - 1) * limit).take(limit);
+
+    const [data, total] = await query.getManyAndCount();
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: number) {
-    const checklist = await this.checklistRepository.findOne({
-      where: { id },
-      relations: ['items', 'event'],
-    });
+    const checklist = await this.checklistRepository
+      .createQueryBuilder('checklist')
+      .leftJoinAndSelect('checklist.items', 'items')
+      .leftJoinAndSelect('checklist.event', 'event')
+      .where('checklist.id = :id', { id })
+      .orderBy('items.nomeSnapshot', 'ASC')
+      .getOne();
 
     if (!checklist) {
       throw new BadRequestException('Checklist não encontrado.');
@@ -296,7 +311,7 @@ export class ChecklistService {
     const novoChecklist = this.checklistRepository.create({
       nome: nomeFinal,
       status: 'rascunho',
-      // Cópia NÃO herda o evento — admin vincula manualmente
+      // Cópia NÍO herda o evento — admin vincula manualmente
     });
 
     const checklistSalvo = await this.checklistRepository.save(novoChecklist);
@@ -403,22 +418,34 @@ export class ChecklistService {
           } else if (
             ['em_evento', 'pendente_devolucao'].includes(checklist.status)
           ) {
-            // Calcula o que ainda está em emUso:
-            // planejado - (ok + quebrado + perdido) = não devolvido
-            // ok -> já retornou para disponivel
-            // quebrado/perdido -> já saíram do emUso E do total na devolução
-            // Então emUso restante = planejado - totalDevolvido
-            const totalDevolvido =
-              (item.quantidadeOk || 0) +
-              (item.quantidadeQuebrada || 0) +
-              (item.quantidadePerdida || 0);
-            const emUsoRestante = item.quantidadePlanejada - totalDevolvido;
+            // Calcular o que REALMENTE saiu de emUso:
+            // - OK → saiu de emUso via registrarDevolucaoOk
+            // - DANO/PERDA BAIXADO → saiu de emUso via confirmarBaixa
+            // - DANO/PERDA PENDENTE → AINDA em emUso (estoque não mudou)
+            const occurrences = await manager.find(EquipmentOccurrence, {
+              where: { checklistItemId: item.id },
+            });
+            const baixadoDano = occurrences
+              .filter(o => o.status === 'BAIXADO' && o.tipo === 'DANO')
+              .reduce((sum, o) => sum + o.quantidade, 0);
+            const baixadoPerda = occurrences
+              .filter(o => o.status === 'BAIXADO' && o.tipo === 'PERDA')
+              .reduce((sum, o) => sum + o.quantidade, 0);
+            const totalSaiuDeEmUso = (item.quantidadeOk || 0) + baixadoDano + baixadoPerda;
+            const emUsoRestante = item.quantidadePlanejada - totalSaiuDeEmUso;
             if (emUsoRestante > 0) {
               await this.stockService.liberarReserva(
                 manager,
                 item.equipmentId,
                 emUsoRestante,
               );
+            }
+
+            // Cancelar ocorrências PENDENTES vinculadas a este item
+            const pendentes = occurrences.filter(o => o.status === 'PENDENTE');
+            for (const occ of pendentes) {
+              occ.status = 'CANCELADO';
+              await manager.save(EquipmentOccurrence, occ);
             }
           }
         }

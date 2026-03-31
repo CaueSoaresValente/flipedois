@@ -22,7 +22,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = useCallback((type: ToastType, message: string) => {
-    // NEVER allow empty messages — always show something
+    // NEVER allow empty messages - always show something
     const safeMessage = message || (type === 'error' ? 'Ocorreu um erro' : 'Operação realizada');
     const id = ++toastId;
     setToasts((prev) => [...prev, { id, type, message: safeMessage }]);
@@ -69,7 +69,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
       {children}
-      {/* Toast container — top right, above everything */}
+      {/* Toast container - top right, above everything */}
       <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2.5 pointer-events-none">
         {toasts.map((toast) => {
           const config = typeConfig[toast.type];

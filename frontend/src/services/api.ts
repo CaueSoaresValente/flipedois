@@ -33,7 +33,7 @@ api.interceptors.response.use(
 // Equipment API
 // =====================
 export const equipmentApi = {
-  getAll: () => api.get('/equipment'),
+  getAll: (params?: { page?: number; limit?: number }) => api.get('/equipment', { params }),
   search: (q: string) => api.get(`/equipment/search?q=${encodeURIComponent(q)}`),
   create: (data: {
     nome: string;
@@ -50,7 +50,7 @@ export const equipmentApi = {
 // Checklist API
 // =====================
 export const checklistApi = {
-  getAll: () => api.get('/checklist'),
+  getAll: (params?: { page?: number; limit?: number }) => api.get('/checklist', { params }),
   getOne: (id: number) => api.get(`/checklist/${id}`),
   create: (nome: string, eventId: number) =>
     api.post('/checklist', { nome, eventId }),
@@ -108,7 +108,7 @@ export const checklistItemApi = {
 // Event API
 // =====================
 export const eventApi = {
-  getAll: () => api.get('/event'),
+  getAll: (params?: { page?: number; limit?: number }) => api.get('/event', { params }),
   getOne: (id: number) => api.get(`/event/${id}`),
   create: (data: any) => api.post('/event', data),
   update: (id: number, data: any) => api.patch(`/event/${id}`, data),
@@ -128,32 +128,27 @@ export const eventApi = {
 // Occurrence API
 // =====================
 export const occurrenceApi = {
-  getAll: () => api.get('/equipment-occurrence'),
+  getAll: (params?: { page?: number; limit?: number }) => api.get('/equipment-occurrence', { params }),
   create: (data: {
     equipmentId: number;
     quantidade: number;
     eventId?: number;
     descricao?: string;
-    tipo?: string;
-    motivo?: string;
+    tipo?: 'OK' | 'DANO' | 'PERDA';
   }) => api.post('/equipment-occurrence', data),
   confirmar: (id: number) =>
     api.patch(`/equipment-occurrence/${id}/confirmar`),
+  editar: (id: number, data: { quantidade?: number; descricao?: string; tipo?: 'OK' | 'DANO' | 'PERDA'; equipmentId?: number }) =>
+    api.patch(`/equipment-occurrence/${id}`, data),
   cancelar: (id: number) =>
     api.patch(`/equipment-occurrence/${id}/cancelar`),
-  resolver: (id: number) =>
-    api.patch(`/equipment-occurrence/${id}/resolver`),
-  achar: (id: number) =>
-    api.patch(`/equipment-occurrence/${id}/achar`),
-  editar: (id: number, data: { quantidade?: number; descricao?: string }) =>
-    api.patch(`/equipment-occurrence/${id}`, data),
 };
 
 // =====================
 // User API
 // =====================
 export const userApi = {
-  getAll: () => api.get('/user'),
+  getAll: (params?: { page?: number; limit?: number }) => api.get('/user', { params }),
   create: (data: {
     nome: string;
     email: string;

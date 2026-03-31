@@ -25,7 +25,8 @@ export type AuditAction =
   | 'EDITAR_DEVOLUCAO'
   | 'REVISAR_DEVOLUCAO'
   | 'APROVAR_LOTE'
-  | 'REVISAR_LOTE';
+  | 'REVISAR_LOTE'
+  | 'APROVAR_TUDO';
 
 @Entity('audit_log')
 export class AuditLog {

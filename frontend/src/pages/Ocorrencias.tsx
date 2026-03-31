@@ -5,6 +5,7 @@ import Modal from '../components/Modal';
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import Pagination from '../components/Pagination';
 
 interface Occurrence {
   id: number;
@@ -14,8 +15,9 @@ interface Occurrence {
   tipo: string;
   motivo?: string;
   createdAt: string;
-  equipment: { id: number; nome: string };
+  equipment: { id: number; nome: string; quantidadeDisponivel: number };
   event: { id: number; nome: string } | null;
+  checklistItemId: number | null;
 }
 
 export default function Ocorrencias() {
@@ -23,11 +25,19 @@ export default function Ocorrencias() {
   const [equipments, setEquipments] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [modalOpen, setModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingOccurrence, setEditingOccurrence] = useState<Occurrence | null>(null);
   const [editQuantidade, setEditQuantidade] = useState(1);
   const [editDescricao, setEditDescricao] = useState('');
+  const [editTipo, setEditTipo] = useState('DANO');
+  const [editEquipmentId, setEditEquipmentId] = useState('');
   const { isAdmin } = useAuth();
   const { addToast } = useToast();
 
@@ -39,26 +49,28 @@ export default function Ocorrencias() {
   const [tipo, setTipo] = useState('DANO');
   const [motivo, setMotivo] = useState('');
 
-  useEffect(() => {
-    load();
-  }, []);
-
   async function load() {
     try {
       const [ocRes, eqRes, evRes] = await Promise.all([
-        occurrenceApi.getAll(),
-        equipmentApi.getAll(),
-        eventApi.getAll(),
+        occurrenceApi.getAll({ page, limit }),
+        equipmentApi.getAll({ page: 1, limit: 1000 }),
+        eventApi.getAll({ page: 1, limit: 1000 }),
       ]);
-      setItems(ocRes.data);
-      setEquipments(eqRes.data);
-      setEvents(evRes.data);
+      setItems(ocRes.data.data);
+      setTotal(ocRes.data.total);
+      setTotalPages(ocRes.data.totalPages);
+      setEquipments(eqRes.data.data);
+      setEvents(evRes.data.data);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    load();
+  }, [page, limit]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -68,8 +80,7 @@ export default function Ocorrencias() {
         eventId: eventId ? Number(eventId) : undefined,
         quantidade,
         descricao,
-        tipo,
-        motivo: motivo || undefined,
+        tipo: tipo as 'OK' | 'DANO' | 'PERDA',
       });
       setModalOpen(false);
       resetForm();
@@ -100,39 +111,24 @@ export default function Ocorrencias() {
   }
 
   async function handleCancelar(id: number) {
+    if (!confirm('Tem certeza que deseja cancelar esta ocorrência manual? O estoque será revertido.')) return;
     try {
       await occurrenceApi.cancelar(id);
       load();
-      addToast('success', 'Ocorrência cancelada. Estoque restaurado.');
+      addToast('success', 'Ocorrência cancelada e estoque revertido.');
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao cancelar.');
     }
   }
 
-  async function handleResolver(id: number) {
-    try {
-      await occurrenceApi.resolver(id);
-      load();
-      addToast('success', 'Ocorrência resolvida. Estoque restaurado.');
-    } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao resolver.');
-    }
-  }
 
-  async function handleAchar(id: number) {
-    try {
-      await occurrenceApi.achar(id);
-      load();
-      addToast('success', 'Item marcado como achado. Estoque restaurado.');
-    } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao marcar como achado.');
-    }
-  }
 
   function openEditModal(oc: Occurrence) {
     setEditingOccurrence(oc);
     setEditQuantidade(oc.quantidade);
     setEditDescricao(oc.descricao || '');
+    setEditTipo(oc.tipo);
+    setEditEquipmentId(String(oc.equipment?.id || ''));
     setEditModalOpen(true);
   }
 
@@ -143,6 +139,8 @@ export default function Ocorrencias() {
       await occurrenceApi.editar(editingOccurrence.id, {
         quantidade: editQuantidade,
         descricao: editDescricao,
+        tipo: editTipo as 'OK' | 'DANO' | 'PERDA',
+        equipmentId: Number(editEquipmentId),
       });
       setEditModalOpen(false);
       setEditingOccurrence(null);
@@ -171,7 +169,7 @@ export default function Ocorrencias() {
               Ocorrências
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              {items.length} ocorrência(s)
+              {total} ocorrência(s)
             </p>
           </div>
         </div>
@@ -221,7 +219,7 @@ export default function Ocorrencias() {
                   className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
                 >
                   <td className="px-6 py-3 text-sm font-medium text-slate-700 dark:text-slate-200">
-                    {oc.equipment?.nome ?? '—'}
+                    {oc.equipment?.nome ?? '-'}
                   </td>
                   <td className="px-6 py-3">
                     <span
@@ -230,6 +228,8 @@ export default function Ocorrencias() {
                           ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                           : oc.tipo === 'PERDA'
                           ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
+                          : oc.tipo === 'OK'
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
                           : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
                       }`}
                     >
@@ -243,56 +243,45 @@ export default function Ocorrencias() {
                     <StatusBadge status={oc.status} />
                   </td>
                   <td className="px-6 py-3 text-sm text-slate-500 dark:text-slate-400">
-                    {oc.event?.nome ?? '—'}
+                    {oc.event?.nome ?? '-'}
                   </td>
                   <td className="px-6 py-3 text-sm text-slate-400 dark:text-slate-500">
                     {new Date(oc.createdAt).toLocaleDateString('pt-BR')}
                   </td>
                   {isAdmin && (
                     <td className="px-6 py-3 text-right">
-                      {['PENDENTE', 'BAIXADO'].includes(oc.status) && (
-                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                          {oc.status === 'PENDENTE' && (
-                            <>
-                              <button
-                                onClick={() => handleConfirmar(oc.id)}
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors"
-                                title="Confirmar baixa"
-                              >
-                                <Check size={13} /> Baixar
-                              </button>
-                              <button
-                                onClick={() => openEditModal(oc)}
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
-                                title="Editar ocorrência"
-                              >
-                                <Edit3 size={13} /> Editar
-                              </button>
-                            </>
-                          )}
+                      <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                        {/* Baixar - apenas PENDENTE */}
+                        {oc.status === 'PENDENTE' && (
+                          <button
+                            onClick={() => handleConfirmar(oc.id)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-green-500 hover:bg-green-600 text-white transition-colors shadow-sm"
+                            title="Confirmar reajuste no estoque"
+                          >
+                            <Check size={14} /> Confirmar Reajuste no Estoque
+                          </button>
+                        )}
+
+                        {/* Cancelar - Apenas PENDENTE MANUAL + TIPO OK */}
+                        {['PENDENTE', 'RESOLVIDO'].includes(oc.status) && !oc.checklistItemId && (
                           <button
                             onClick={() => handleCancelar(oc.id)}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
-                            title="Cancelar (restaura estoque)"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors border border-red-200 dark:border-red-800 shadow-sm"
+                            title="Cancelar ocorrência manual"
                           >
-                            <X size={13} /> Cancelar
+                            <X size={14} /> Cancelar
                           </button>
-                          <button
-                            onClick={() => handleResolver(oc.id)}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors"
-                            title="Marcar como Resolvido (restaura estoque)"
-                          >
-                            <RefreshCw size={13} /> Resolvido
-                          </button>
-                          <button
-                            onClick={() => handleAchar(oc.id)}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 hover:bg-teal-200 dark:hover:bg-teal-900/50 transition-colors"
-                            title="Marcar como Achado (restaura estoque)"
-                          >
-                            <Search size={13} /> Achado
-                          </button>
-                        </div>
-                      )}
+                        )}
+
+                        {/* Editar - Sempre visível conforme solicitado */}
+                        <button
+                          onClick={() => openEditModal(oc)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors border border-slate-200 dark:border-slate-600 shadow-sm"
+                          title="Editar ocorrência"
+                        >
+                          <Edit3 size={14} /> Editar
+                        </button>
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -306,6 +295,15 @@ export default function Ocorrencias() {
           )}
         </div>
       </div>
+
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        limit={limit}
+        onPageChange={setPage}
+        onLimitChange={(newLimit) => { setLimit(newLimit); setPage(1); }}
+      />
 
       {/* Create Modal */}
       <Modal
@@ -321,7 +319,7 @@ export default function Ocorrencias() {
             <select
               className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
               value={equipmentId}
-              onChange={(e) => setEquipmentId(e.target.value)}
+              onChange={(e) => { setEquipmentId(e.target.value); setQuantidade(1); }}
               required
             >
               <option value="">Selecione...</option>
@@ -342,41 +340,66 @@ export default function Ocorrencias() {
                 value={tipo}
                 onChange={(e) => setTipo(e.target.value)}
               >
+                <option value="OK">OK</option>
                 <option value="DANO">Dano</option>
                 <option value="PERDA">Perda</option>
-                <option value="AJUSTE">Ajuste</option>
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Quantidade
+                Evento (opcional)
               </label>
-              <input
-                type="number"
-                min="1"
+              <select
                 className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-                value={quantidade}
-                onChange={(e) => setQuantidade(Number(e.target.value))}
-                required
-              />
+                value={eventId}
+                onChange={(e) => {
+                   setEventId(e.target.value);
+                   setQuantidade(1);
+                }}
+              >
+                <option value="">Sem evento (do Disponível)</option>
+                {events.map((ev: any) => (
+                  <option key={ev.id} value={ev.id}>
+                    {ev.nome}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Evento (opcional)
+              Quantidade
             </label>
-            <select
+            <input
+              type="number"
+              min="1"
+              max={
+                equipmentId 
+                  ? (tipo === 'OK'
+                    ? (equipments.find((eq: any) => String(eq.id) === equipmentId)?.quantidadeEmUso || 1)
+                    : (equipments.find((eq: any) => String(eq.id) === equipmentId)?.quantidadeDisponivel || 1)
+                  ) 
+                  : undefined
+              }
               className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-              value={eventId}
-              onChange={(e) => setEventId(e.target.value)}
-            >
-              <option value="">Sem evento</option>
-              {events.map((ev: any) => (
-                <option key={ev.id} value={ev.id}>
-                  {ev.nome}
-                </option>
-              ))}
-            </select>
+              value={quantidade}
+              onChange={(e) => {
+                const selected = equipments.find((eq: any) => String(eq.id) === equipmentId);
+                const maxQty = tipo === 'OK' ? (selected?.quantidadeEmUso || 1) : (selected?.quantidadeDisponivel || 1);
+                setQuantidade(Math.min(Number(e.target.value), maxQty));
+              }}
+              required
+            />
+            {equipmentId && (
+              <p className="text-xs text-slate-400 mt-1">
+                {tipo === 'OK' ? 'Em Uso (Total no Sistema): ' : 'Disponível: '}
+                {tipo === 'OK' 
+                  ? (equipments.find((eq: any) => String(eq.id) === equipmentId)?.quantidadeEmUso ?? '?')
+                  : (equipments.find((eq: any) => String(eq.id) === equipmentId)?.quantidadeDisponivel ?? '?')
+                }
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -389,19 +412,7 @@ export default function Ocorrencias() {
               onChange={(e) => setDescricao(e.target.value)}
             />
           </div>
-          {tipo === 'AJUSTE' && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Motivo (obrigatório para ajuste)
-              </label>
-              <input
-                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-                value={motivo}
-                onChange={(e) => setMotivo(e.target.value)}
-                required
-              />
-            </div>
-          )}
+
           <button
             type="submit"
             className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
@@ -420,25 +431,66 @@ export default function Ocorrencias() {
         {editingOccurrence && (
           <form onSubmit={handleEditar} className="space-y-4">
             <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-3">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                {editingOccurrence.equipment?.nome}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Tipo: <span className="font-medium">{editingOccurrence.tipo}</span> • Status: <StatusBadge status={editingOccurrence.status} />
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Status Atual: <StatusBadge status={editingOccurrence.status} />
               </p>
             </div>
+
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Quantidade
+                Equipamento
               </label>
-              <input
-                type="number"
-                min="1"
-                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-                value={editQuantidade}
-                onChange={(e) => setEditQuantidade(Number(e.target.value))}
-                required
-              />
+              {editingOccurrence.checklistItemId ? (
+                <p className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-white text-sm">
+                  {editingOccurrence.equipment?.nome || 'Equipamento'}
+                </p>
+              ) : (
+                <select
+                  className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+                  value={editEquipmentId}
+                  onChange={(e) => setEditEquipmentId(e.target.value)}
+                  required
+                >
+                  <option value="">Selecione...</option>
+                  {equipments.map((eq: any) => (
+                    <option key={eq.id} value={eq.id}>
+                      {eq.nome}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Tipo
+                </label>
+                <select
+                  className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+                  value={editTipo}
+                  onChange={(e) => setEditTipo(e.target.value)}
+                  required
+                >
+                  <option value="OK">OK</option>
+                  <option value="DANO">Dano</option>
+                  <option value="PERDA">Perda</option>
+                </select>
+              </div>
+                {editingOccurrence.checklistItemId ? (
+                  <p className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-white text-sm">
+                    {editQuantidade}
+                  </p>
+                ) : (
+                  <input
+                    type="number"
+                    min="1"
+                    className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+                    value={editQuantidade}
+                    onChange={(e) => setEditQuantidade(Number(e.target.value))}
+                    required
+                  />
+                )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">

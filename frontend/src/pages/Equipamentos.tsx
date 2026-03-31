@@ -5,6 +5,7 @@ import Modal from '../components/Modal';
 import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import Pagination from '../components/Pagination';
 
 interface Equipment {
   id: number;
@@ -39,14 +40,22 @@ export default function Equipamentos() {
   // Search
   const [search, setSearch] = useState('');
 
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   useEffect(() => {
     load();
-  }, []);
+  }, [page, limit]);
 
   async function load() {
     try {
-      const res = await equipmentApi.getAll();
-      setEquipments(res.data);
+      const res = await equipmentApi.getAll({ page, limit });
+      setEquipments(res.data.data);
+      setTotal(res.data.total);
+      setTotalPages(res.data.totalPages);
     } catch (err) {
       console.error(err);
     } finally {
@@ -143,7 +152,7 @@ export default function Equipamentos() {
               Equipamentos
             </h1>
             <p className="text-sm text-slate-500">
-              {equipments.length} equipamento(s) ativos
+              {total} equipamento(s) ativos
             </p>
           </div>
         </div>
@@ -188,6 +197,12 @@ export default function Equipamentos() {
                 </th>
                 <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500">
                   Em Uso
+                </th>
+                <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500">
+                  Quebrado
+                </th>
+                <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500">
+                  Perdido
                 </th>
                 {isAdmin && (
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500">
@@ -239,7 +254,13 @@ export default function Equipamentos() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center text-slate-500">
-                    {eq.quantidadeTotal - eq.quantidadeDisponivel}
+                    {eq.quantidadeEmUso}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={eq.quantidadeDanificada > 0 ? 'text-red-500 font-semibold' : 'text-slate-400'}>{eq.quantidadeDanificada}</span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={eq.quantidadePerdida > 0 ? 'text-amber-500 font-semibold' : 'text-slate-400'}>{eq.quantidadePerdida}</span>
                   </td>
                   {isAdmin && (
                     <td className="px-4 py-3">
@@ -272,6 +293,15 @@ export default function Equipamentos() {
           )}
         </div>
       </div>
+
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        limit={limit}
+        onPageChange={setPage}
+        onLimitChange={(newLimit) => { setLimit(newLimit); setPage(1); }}
+      />
 
       {/* Deactivate Confirm Modal */}
       <ConfirmModal

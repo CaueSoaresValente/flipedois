@@ -125,7 +125,7 @@ export default function Login() {
           {/* Footer */}
           <div className="mt-8 pt-6 border-t border-white/[0.06]">
             <p className="text-center text-white/20 text-xs font-medium">
-              © 2026 Flipe Eventos — Gestão Profissional
+              © 2026 Flipe Eventos - Gestão Profissional
             </p>
           </div>
         </div>

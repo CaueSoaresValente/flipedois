@@ -6,6 +6,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import { ChecklistService } from './checklist.service';
@@ -29,8 +30,16 @@ export class ChecklistController {
   }
 
   @Get()
-  findAll(@Req() req: any) {
-    return this.service.findAll(req.user.role);
+  findAll(
+    @Req() req: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.findAll(
+      req.user.role,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 20,
+    );
   }
 
   @Get(':id')

@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Checklist } from '../checklist/checklist.entity';
 import { ChecklistItem } from '../checklist-item/checklist-item.entity';
 import { DataSource, Repository } from 'typeorm';
+import { EquipmentOccurrence } from '../equipment-occurrence/equipment-occurrence.entity';
 import { Equipment } from '../equipment/equipment.entity';
 import { CreateEventDto } from './dto/create-event.dto';
 import { CreateEventTeamDto } from './dto/create-event-team.dto';
@@ -48,16 +49,6 @@ export class EventService {
 
     const saved = await this.repo.save(event);
 
-    if (dto.checklistId) {
-      const checklist = await this.checklistRepo.findOne({
-        where: { id: dto.checklistId },
-      });
-      if (checklist) {
-        checklist.eventId = saved.id;
-        await this.checklistRepo.save(checklist);
-      }
-    }
-
     await this.auditLogService.log(
       userId ?? null,
       userEmail ?? null,
@@ -71,7 +62,7 @@ export class EventService {
     return saved;
   }
 
-  findAll(userRole?: string) {
+  async findAll(userRole?: string, page = 1, limit = 20) {
     const query = this.repo
       .createQueryBuilder('event')
       .leftJoinAndSelect('event.checklists', 'checklists')
@@ -89,7 +80,17 @@ export class EventService {
       );
     }
 
-    return query.getMany();
+    query.skip((page - 1) * limit).take(limit);
+
+    const [data, total] = await query.getManyAndCount();
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: number) {
@@ -259,19 +260,34 @@ export class EventService {
           } else if (
             ['em_evento', 'pendente_devolucao'].includes(checklist.status)
           ) {
-            // Reverter apenas o que ainda está em emUso
-            // OK → já voltou para disponivel, Quebrado/Perdido → já saíram de emUso na devolução
-            const totalDevolvido =
-              (item.quantidadeOk || 0) +
-              (item.quantidadeQuebrada || 0) +
-              (item.quantidadePerdida || 0);
-            const emUso = item.quantidadePlanejada - totalDevolvido;
+            // Calcular o que REALMENTE saiu de emUso:
+            // - OK → saiu de emUso via registrarDevolucaoOk
+            // - DANO/PERDA BAIXADO → saiu de emUso via confirmarBaixa
+            // - DANO/PERDA PENDENTE → AINDA em emUso (estoque não mudou)
+            const occurrences = await manager.find(EquipmentOccurrence, {
+              where: { checklistItemId: item.id },
+            });
+            const baixadoDano = occurrences
+              .filter(o => o.status === 'BAIXADO' && o.tipo === 'DANO')
+              .reduce((sum, o) => sum + o.quantidade, 0);
+            const baixadoPerda = occurrences
+              .filter(o => o.status === 'BAIXADO' && o.tipo === 'PERDA')
+              .reduce((sum, o) => sum + o.quantidade, 0);
+            const totalSaiuDeEmUso = (item.quantidadeOk || 0) + baixadoDano + baixadoPerda;
+            const emUso = item.quantidadePlanejada - totalSaiuDeEmUso;
             if (emUso > 0) {
               await this.stockService.liberarReserva(
                 manager,
                 item.equipmentId,
                 emUso,
               );
+            }
+
+            // Cancelar ocorrências PENDENTES vinculadas a este item
+            const pendentes = occurrences.filter(o => o.status === 'PENDENTE');
+            for (const occ of pendentes) {
+              occ.status = 'CANCELADO';
+              await manager.save(EquipmentOccurrence, occ);
             }
           }
         }

@@ -1,7 +1,6 @@
 import {
   IsString,
   IsDateString,
-  IsInt,
   ValidateNested,
   IsOptional,
 } from 'class-validator';
@@ -31,9 +30,7 @@ export class CreateEventDto {
   @IsDateString()
   dataFim: string;
 
-  @IsOptional()
-  @IsInt()
-  checklistId?: number;
+
 
   @IsOptional()
   @ValidateNested({ each: true })

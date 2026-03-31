@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import { CreateEventDto } from './dto/create-event.dto';
@@ -33,8 +34,16 @@ export class EventController {
   }
 
   @Get()
-  findAll(@Req() req: any) {
-    return this.service.findAll(req.user?.role);
+  findAll(
+    @Req() req: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.findAll(
+      req.user?.role,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 20,
+    );
   }
 
   @Get(':id')
@@ -42,6 +51,7 @@ export class EventController {
     return this.service.findOne(id);
   }
 
+  @Roles('ADMIN')
   @Post(':id/equipe')
   adicionarEquipe(
     @Param('id', ParseIntPipe) id: number,
@@ -50,11 +60,13 @@ export class EventController {
     return this.service.adicionarEquipe(id, dto);
   }
 
+  @Roles('ADMIN', 'FUNCIONARIO')
   @Get(':id/equipe')
   listarEquipe(@Param('id', ParseIntPipe) id: number) {
     return this.service.listarEquipe(id);
   }
 
+  @Roles('ADMIN')
   @Patch('event-team/:id')
   editarEquipe(
     @Param('id', ParseIntPipe) id: number,

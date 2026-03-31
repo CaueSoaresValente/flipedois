@@ -59,8 +59,8 @@ export default function Dashboard() {
 
   async function loadData() {
     try {
-      const clRes = await checklistApi.getAll();
-      setRecentChecklists(clRes.data.slice(0, 5));
+      const clRes = await checklistApi.getAll({ page: 1, limit: 5 });
+      setRecentChecklists(clRes.data.data);
 
       if (isAdmin) {
         const statsRes = await dashboardApi.getStats();
@@ -130,7 +130,7 @@ export default function Dashboard() {
         <Activity className="text-[#1A237E] dark:text-[#00BCD4]" size={24} />
         <div>
           <h1 className="text-2xl font-bold text-slate-800 dark:text-white">
-            {isAdmin ? 'Dashboard — Gestão' : 'Dashboard — Operacional'}
+            {isAdmin ? 'Dashboard - Gestão' : 'Dashboard - Operacional'}
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             {isAdmin ? 'Visão geral do sistema' : 'Suas tarefas do dia'}
@@ -138,7 +138,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Stats Cards — ADMIN only */}
+      {/* Stats Cards - ADMIN only */}
       {isAdmin && stats && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

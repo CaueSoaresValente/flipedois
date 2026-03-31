@@ -10,37 +10,45 @@ import { Equipment } from '../equipment/equipment.entity';
  * Todas as operações de estoque DEVEM passar por este serviço.
  *
  * FÓRMULA INVARIANTE:
- *   quantidadeTotal = disponivel + emUso + danificada + perdida
+ *   quantidadeTotal = disponivel + emUso + danificada
+ *
+ * NOTA: quantidadePerdida é um contador separado.
+ * Itens perdidos são removidos do quantidadeTotal.
+ * Itens danificados permanecem no quantidadeTotal (bucket danificada).
  *
  * FLUXO DE ESTOQUE:
  *
  * 1. LIBERAR CHECKLIST:
- *    interno:  disponivel -= planejado, emUso += planejado
- *    alugado:  emUso += planejado
+ *    disponivel -= planejado, emUso += planejado
  *
- * 2. DEVOLUÇÃO OK (qualquer origem):
- *    interno:  disponivel += qty
- *    ambos:    emUso -= qty
+ * 2. DEVOLUÇÍO OK:
+ *    disponivel += qty, emUso -= qty
  *
- * 3. DEVOLUÇÃO DANIFICADA (imediato, sem esperar ocorrência):
+ * 3. DEVOLUÇÍO DANIFICADA (via confirmarBaixa):
  *    emUso -= qty
  *    danificada += qty
- *    total -= qty
+ *    (total NÍO muda — item permanece no total, apenas muda de bucket)
  *
- * 4. DEVOLUÇÃO PERDIDA (imediato):
+ * 4. DEVOLUÇÍO PERDIDA (via confirmarBaixa):
  *    emUso -= qty
  *    perdida += qty
- *    total -= qty
+ *    total -= qty  (item sai do sistema)
  *
- * 5. CANCELAR OCORRÊNCIA BAIXADA (dano reparado):
- *    DANO: danificada -= qty, disponivel += qty, total += qty
+ * 5. CANCELAR/ACHAR OCORRÊNCIA BAIXADA:
+ *    DANO: danificada -= qty, disponivel += qty
  *    PERDA: perdida -= qty, disponivel += qty, total += qty
+ *
+ * 6. DANO MANUAL (sem devolução):
+ *    disponivel -= qty, danificada += qty
+ *    (total NÍO muda)
+ *
+ * 7. PERDA MANUAL (sem devolução):
+ *    disponivel -= qty, perdida += qty, total -= qty
  *
  * REGRAS:
  *   - Nenhum campo pode ficar negativo
  *   - Todo método deve ser chamado dentro de uma transação ativa
  *   - Todo método usa pessimistic_write lock no equipamento
- *   - Ocorrências são registros de auditoria — NÃO alteram estoque
  * ============================================================
  */
 @Injectable()
@@ -142,7 +150,7 @@ export class StockService {
   }
 
   /**
-   * CANCELAR LIBERAÇÃO: Reverte a reserva (cancela checklist/evento ou reduz quantidade).
+   * CANCELAR LIBERAÇÍO: Reverte a reserva (cancela checklist/evento ou reduz quantidade).
    *
    * Regra de ouro (interno e alugado):
    *   disponivel += quantidade
@@ -176,11 +184,11 @@ export class StockService {
   }
 
   // ============================================================
-  // DEVOLUÇÃO (Return flows)
+  // DEVOLUÇÍO (Return flows)
   // ============================================================
 
   /**
-   * DEVOLUÇÃO OK: Equipamento devolvido em bom estado.
+   * DEVOLUÇÍO OK: Equipamento devolvido em bom estado.
    *
    * Regra de ouro (interno e alugado):
    *   disponivel += quantidade
@@ -213,13 +221,13 @@ export class StockService {
   }
 
   /**
-   * DEVOLUÇÃO DANIFICADA: Equipamento devolvido danificado.
+   * DEVOLUÇÍO DANIFICADA: Equipamento devolvido danificado.
    * Ajuste imediato no momento da devolução — sem esperar confirmação de ocorrência.
    *
    * emUso -= quantidade
    * danificada += quantidade
-   * total -= quantidade
    *
+   * total NÃO muda — item permanece no total, apenas muda de bucket.
    * Aplica para qualquer origem (interno e alugado).
    */
   async registrarDevolucaoDanificado(
@@ -241,14 +249,13 @@ export class StockService {
 
     equipment.quantidadeEmUso -= quantidade;
     equipment.quantidadeDanificada += quantidade;
-    equipment.quantidadeTotal -= quantidade;
 
     this.validarEstoque(equipment);
     return manager.save(Equipment, equipment);
   }
 
   /**
-   * DEVOLUÇÃO PERDIDA: Equipamento declarado como perdido.
+   * DEVOLUÇÍO PERDIDA: Equipamento declarado como perdido.
    * Ajuste imediato no momento da devolução.
    *
    * emUso -= quantidade
@@ -292,8 +299,8 @@ export class StockService {
    *
    * danificada -= quantidade
    * disponivel += quantidade
-   * total += quantidade
    *
+   * total NÃO muda — restaura de danificada para disponivel.
    * Chamado apenas quando o status da ocorrência era BAIXADO.
    */
   async cancelarDano(
@@ -315,7 +322,6 @@ export class StockService {
 
     equipment.quantidadeDanificada -= quantidade;
     equipment.quantidadeDisponivel += quantidade;
-    equipment.quantidadeTotal += quantidade;
 
     this.validarEstoque(equipment);
     return manager.save(Equipment, equipment);
@@ -356,29 +362,7 @@ export class StockService {
     return manager.save(Equipment, equipment);
   }
 
-  // ============================================================
-  // AJUSTE MANUAL
-  // ============================================================
 
-  /**
-   * AJUSTE MANUAL: Ajuste positivo ou negativo de estoque pelo admin.
-   * Afeta total e disponivel.
-   */
-  async ajustarEstoque(
-    manager: EntityManager,
-    equipmentId: number,
-    delta: number,
-  ): Promise<Equipment> {
-    const equipment = await this.getEquipmentWithLock(manager, equipmentId);
-
-    if (delta === 0) return equipment;
-
-    equipment.quantidadeTotal += delta;
-    equipment.quantidadeDisponivel += delta;
-
-    this.validarEstoque(equipment);
-    return manager.save(Equipment, equipment);
-  }
 
   // ============================================================
   // OCORRÊNCIA MANUAL (Manual damage/loss — stock from disponivel)
@@ -411,7 +395,6 @@ export class StockService {
 
     equipment.quantidadeDisponivel -= quantidade;
     equipment.quantidadeDanificada += quantidade;
-    equipment.quantidadeTotal -= quantidade;
 
     this.validarEstoque(equipment);
     return manager.save(Equipment, equipment);

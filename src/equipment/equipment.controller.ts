@@ -17,8 +17,14 @@ export class EquipmentController {
 
   @Roles('ADMIN', 'FUNCIONARIO')
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.findAll(
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 20,
+    );
   }
 
   // Fix #1: Search endpoint for autocomplete

@@ -18,6 +18,7 @@ import EquipmentSearch from '../components/EquipmentSearch';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useNavigate, useParams } from 'react-router-dom';
+import Pagination from '../components/Pagination';
 
 interface ChecklistItem {
   id: number;
@@ -81,7 +82,7 @@ function QuantityStepper({
         onClick={() => onChange(Math.max(min, value - 1))}
         className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xl hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center"
       >
-        −
+        -
       </button>
       <span className="text-2xl font-bold text-slate-800 dark:text-white w-12 text-center">
         {value}
@@ -129,6 +130,12 @@ export default function Checklists() {
   const [renameValue, setRenameValue] = useState('');
   const [lowStockNames, setLowStockNames] = useState<string[]>([]);
 
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   // Separation modal with stepper
   const [separateModal, setSeparateModal] = useState<ChecklistItem | null>(null);
   const [separateQty, setSeparateQty] = useState(1);
@@ -144,10 +151,6 @@ export default function Checklists() {
   const [pendingModal, setPendingModal] = useState(false);
 
   useEffect(() => {
-    load();
-  }, []);
-
-  useEffect(() => {
     // Abrir checklist diretamente via rota /checklists/:id
     const idNum = routeId ? Number(routeId) : null;
     if (!idNum || Number.isNaN(idNum)) return;
@@ -159,19 +162,25 @@ export default function Checklists() {
   async function load() {
     try {
       const [clRes, eqRes, evRes] = await Promise.all([
-        checklistApi.getAll(),
-        equipmentApi.getAll(),
-        eventApi.getAll(),
+        checklistApi.getAll({ page, limit }),
+        equipmentApi.getAll({ page: 1, limit: 1000 }),
+        eventApi.getAll({ page: 1, limit: 1000 }),
       ]);
-      setChecklists(clRes.data);
-      setEquipments(eqRes.data);
-      setEvents(evRes.data.filter((ev: EventOption) => ev.status !== 'finalizado'));
+      setChecklists(clRes.data.data);
+      setTotal(clRes.data.total);
+      setTotalPages(clRes.data.totalPages);
+      setEquipments(eqRes.data.data);
+      setEvents(evRes.data.data.filter((ev: any) => ev.status !== 'finalizado'));
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    load();
+  }, [page, limit]);
 
   async function openChecklistById(id: number) {
     try {
@@ -423,7 +432,7 @@ export default function Checklists() {
               Checklists
             </h1>
             <p className="text-sm text-slate-500">
-              {checklists.length} checklist(s)
+              {total} checklist(s)
             </p>
           </div>
         </div>
@@ -522,13 +531,22 @@ export default function Checklists() {
         ))}
       </div>
 
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        limit={limit}
+        onPageChange={setPage}
+        onLimitChange={(newLimit) => { setLimit(newLimit); setPage(1); }}
+      />
+
       {checklists.length === 0 && (
         <div className="text-center text-slate-400 py-12">
           Nenhum checklist cadastrado
         </div>
       )}
 
-      {/* Create Checklist Modal — requires Event */}
+      {/* Create Checklist Modal - requires Event */}
       <Modal
         open={modalCreate}
         onClose={() => setModalCreate(false)}
@@ -552,7 +570,7 @@ export default function Checklists() {
               <option value="">Selecione um evento...</option>
               {events.map((ev) => (
                 <option key={ev.id} value={ev.id}>
-                  {ev.nome} — {ev.cliente}
+                  {ev.nome} - {ev.cliente}
                 </option>
               ))}
             </select>
@@ -783,7 +801,7 @@ export default function Checklists() {
                   
                   let statusColor = 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20';
                   let statusIcon = '🟥';
-                  let statusText = 'NÃO SEPARADO';
+                  let statusText = 'NÍO SEPARADO';
                   
                   if (isSeparated) {
                     statusColor = 'border-emerald-200 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20';
@@ -950,7 +968,7 @@ export default function Checklists() {
                           {(item.quantidadeOk ?? 0) === 0 &&
                             (item.quantidadeQuebrada ?? 0) === 0 &&
                             (item.quantidadePerdida ?? 0) === 0 && (
-                              <span className="text-slate-400">—</span>
+                              <span className="text-slate-400">-</span>
                             )}
                         </div>
                       </td>
@@ -1057,7 +1075,7 @@ export default function Checklists() {
                   className="w-full flex items-center justify-center gap-2 border border-amber-300 text-amber-700 dark:text-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-xl py-2.5 text-sm font-medium"
                 >
                   <AlertCircle size={16} />
-                  {pendingItems.length} item(s) pendente(s) — ver detalhes
+                  {pendingItems.length} item(s) pendente(s) - ver detalhes
                 </button>
               ) : (
                 <div className="flex items-center gap-2 justify-center text-emerald-600 dark:text-emerald-400 py-2 text-sm">
@@ -1133,11 +1151,11 @@ export default function Checklists() {
         </form>
       </Modal>
 
-      {/* Separation Modal — stepper + progress info */}
+      {/* Separation Modal - stepper + progress info */}
       <Modal
         open={separateModal !== null}
         onClose={() => { setSeparateModal(null); setSeparateQty(1); }}
-        title={`Separar — ${separateModal?.nomeSnapshot ?? ''}`}
+        title={`Separar - ${separateModal?.nomeSnapshot ?? ''}`}
       >
         <div className="space-y-5">
           <div className="grid grid-cols-3 gap-3 text-center">
@@ -1177,11 +1195,11 @@ export default function Checklists() {
         </div>
       </Modal>
 
-      {/* Return Modal — simplified for employees (quantity + observation only) */}
+      {/* Return Modal - simplified for employees (quantity + observation only) */}
       <Modal
         open={returnModal !== null}
         onClose={() => { setReturnModal(null); setReturnQty(1); setReturnObservation(''); }}
-        title={`Devolver — ${returnModal?.nomeSnapshot ?? ''}`}
+        title={`Devolver - ${returnModal?.nomeSnapshot ?? ''}`}
       >
         {returnModal && (() => {
           const remaining = returnModal.quantidadeSeparada - returnModal.quantidadeDevolvida;
@@ -1267,11 +1285,11 @@ export default function Checklists() {
         })()}
       </Modal>
 
-      {/* Admin Review Modal — where stock changes happen */}
+      {/* Admin Review Modal - where stock changes happen */}
       <Modal
         open={reviewModal !== null}
         onClose={() => { setReviewModal(null); setReviewConditions({ ok: 0, danificado: 0, perdido: 0 }); }}
-        title={`Revisar Devolução — ${reviewModal?.nomeSnapshot ?? ''}`}
+        title={`Revisar Devolução - ${reviewModal?.nomeSnapshot ?? ''}`}
       >
         {reviewModal && (() => {
           const totalReview = reviewConditions.ok + reviewConditions.danificado + reviewConditions.perdido;
@@ -1302,9 +1320,9 @@ export default function Checklists() {
 
               <div className="space-y-3">
                 {[
-                  { key: 'ok' as const, label: '✓ OK — Retorna ao disponível', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
-                  { key: 'danificado' as const, label: '✕ Danificado — Vai para danificados', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
-                  { key: 'perdido' as const, label: '? Perdido — Reduz total', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
+                  { key: 'ok' as const, label: '✓ OK - Retorna ao disponível', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10' },
+                  { key: 'danificado' as const, label: '✕ Danificado - Vai para danificados', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' },
+                  { key: 'perdido' as const, label: '? Perdido - Reduz total', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' },
                 ].map(({ key, label, color }) => (
                   <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -1347,7 +1365,7 @@ export default function Checklists() {
       <Modal
         open={editQtyModal !== null}
         onClose={() => { setEditQtyModal(null); }}
-        title={`Editar quantidade — ${editQtyModal?.nomeSnapshot ?? ''}`}
+        title={`Editar quantidade - ${editQtyModal?.nomeSnapshot ?? ''}`}
       >
         {editQtyModal && (
           <div className="space-y-4">
@@ -1371,7 +1389,7 @@ export default function Checklists() {
       <Modal
         open={editReturnModal !== null}
         onClose={() => { setEditReturnModal(null); setEditReturnConditions({ ok: 0, quebrado: 0, perdido: 0 }); }}
-        title={`Editar devolução — ${editReturnModal?.nomeSnapshot ?? ''}`}
+        title={`Editar devolução - ${editReturnModal?.nomeSnapshot ?? ''}`}
       >
         {editReturnModal && (() => {
           const total = (editReturnModal.quantidadeOk ?? 0) + (editReturnModal.quantidadeQuebrada ?? 0) + (editReturnModal.quantidadePerdida ?? 0);
@@ -1473,7 +1491,7 @@ export default function Checklists() {
             onClick={() => setPendingModal(false)}
             className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2 rounded-xl text-sm font-medium"
           >
-            Entendido — continuar separando
+            Entendido - continuar separando
           </button>
         </div>
       </Modal>
@@ -1508,7 +1526,7 @@ export default function Checklists() {
       <Modal
         open={renameModal !== null}
         onClose={() => { setRenameModal(null); setRenameValue(''); }}
-        title={`Renomear Checklist — ${renameModal?.nome ?? ''}`}
+        title={`Renomear Checklist - ${renameModal?.nome ?? ''}`}
       >
         <form onSubmit={handleRenameChecklist} className="space-y-4">
           <div>
