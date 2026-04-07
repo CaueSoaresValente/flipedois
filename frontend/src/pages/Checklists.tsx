@@ -20,6 +20,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import Pagination from '../components/Pagination';
+import * as XLSX from 'xlsx-js-style';
 
 interface ChecklistItem {
   id: number;
@@ -193,7 +194,7 @@ export default function Checklists() {
       setSelected(r.data);
       setModalItems(true);
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Checklist não encontrado');
+      addToast('error', err.response?.data?.message || 'Checklist não encontrado.');
       // Volta para a lista, mantendo UX consistente
       navigate('/checklists');
     }
@@ -202,7 +203,7 @@ export default function Checklists() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!createEventId) {
-      addToast('error', 'Selecione um evento para o checklist');
+      addToast('error', 'Selecione um evento para vincular ao checklist.');
       return;
     }
     try {
@@ -210,20 +211,240 @@ export default function Checklists() {
       setModalCreate(false);
       setNome('');
       setCreateEventId('');
-      addToast('success', 'Checklist criado com sucesso');
+      addToast('success', 'Checklist criado com sucesso!');
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao criar checklist');
+      addToast('error', err.response?.data?.message || 'Erro ao criar o checklist.');
     }
   }
 
-  async function handleLiberar(id: number) {
+  async function handleBaixarChecklist(cl: Checklist) {
     try {
-      await checklistApi.liberar(id);
-      addToast('success', 'Checklist liberado para separação');
-      load();
+      const wb = XLSX.utils.book_new();
+
+      // ── Paleta de cores ──
+      const COLORS = {
+        indigo: '4F46E5',
+        indigoLight: 'EEF2FF',
+        slate900: '0F172A',
+        slate700: '334155',
+        slate100: 'F1F5F9',
+        slate50: 'F8FAFC',
+        white: 'FFFFFF',
+        border: 'CBD5E1',
+        borderDark: '94A3B8',
+        emptyField: 'FFFBEB',
+        emptyFieldBorder: 'F59E0B',
+        zebraLight: 'F8FAFC',
+        zebraDark: 'EEF2FF',
+      };
+
+      // Cores por setor
+      const SETOR_COLORS: Record<string, { bg: string; text: string }> = {
+        som: { bg: 'DBEAFE', text: '1E40AF' },        // azul
+        luz: { bg: 'FEF3C7', text: '92400E' },        // amarelo
+        video: { bg: 'D1FAE5', text: '065F46' },      // verde
+        estrutura: { bg: 'FEE2E2', text: '991B1B' },  // vermelho
+        comunicacao: { bg: 'E0E7FF', text: '3730A3' }, // indigo
+        outros: { bg: 'F3E8FF', text: '6B21A8' },     // roxo
+      };
+
+      const thinBorder = {
+        top: { style: 'thin', color: { rgb: COLORS.border } },
+        bottom: { style: 'thin', color: { rgb: COLORS.border } },
+        left: { style: 'thin', color: { rgb: COLORS.border } },
+        right: { style: 'thin', color: { rgb: COLORS.border } },
+      };
+
+      // ── Estilos ──
+      const titleStyle = {
+        font: { bold: true, sz: 18, color: { rgb: COLORS.white } },
+        fill: { fgColor: { rgb: COLORS.indigo } },
+        alignment: { horizontal: 'center' as const, vertical: 'center' as const },
+        border: thinBorder,
+      };
+      const subtitleStyle = {
+        font: { bold: true, sz: 11, color: { rgb: COLORS.slate700 } },
+        fill: { fgColor: { rgb: COLORS.indigoLight } },
+        alignment: { horizontal: 'center' as const },
+        border: thinBorder,
+      };
+      const dateStyle = {
+        font: { italic: true, sz: 9, color: { rgb: COLORS.slate700 } },
+        fill: { fgColor: { rgb: COLORS.indigoLight } },
+        alignment: { horizontal: 'center' as const },
+        border: thinBorder,
+      };
+      const headerStyle = {
+        font: { bold: true, sz: 11, color: { rgb: COLORS.white } },
+        fill: { fgColor: { rgb: COLORS.slate900 } },
+        alignment: { horizontal: 'center' as const },
+        border: {
+          bottom: { style: 'medium', color: { rgb: COLORS.slate900 } },
+          top: { style: 'medium', color: { rgb: COLORS.slate900 } },
+          left: { style: 'thin', color: { rgb: COLORS.slate900 } },
+          right: { style: 'thin', color: { rgb: COLORS.slate900 } },
+        },
+      };
+
+      const headers = ['Equipamento', 'Setor', 'Qtd.', 'Sep.', 'Devol.', 'OK', 'Qb', 'Pd'];
+
+      const items = cl.items ?? [];
+
+      const rows = items.map((i) => [
+        i.nomeSnapshot,
+        (i.setor ?? '').charAt(0).toUpperCase() + (i.setor ?? '').slice(1),
+        i.quantidadePlanejada ?? 0,
+        '', '', '', '', '', // Sep., Devol., OK, Qb, Pd → vazios para preenchimento manual
+      ]);
+
+      const now = new Date();
+      const dateStr = `Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+
+      const wsData: any[][] = [
+        [`CHECKLIST: ${cl.nome.toUpperCase()}`],
+        [`Status: ${cl.status.toUpperCase().replace('_', ' ')}  •  ${items.length} item(ns)`],
+        [dateStr],
+        [],
+        headers,
+        ...rows,
+        [], // Linha vazia antes do rodapé
+        [`FLIP EDOIS  •  ${dateStr}`],
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+      const totalCols = headers.length;
+      const headerRow = 4; // row index (0-based) where headers are
+      const dataStartRow = 5;
+      const dataEndRow = dataStartRow + rows.length - 1;
+      const footerRow = dataEndRow + 2;
+
+      // ── Título (linha 0) ──
+      for (let c = 0; c < totalCols; c++) {
+        const ref = XLSX.utils.encode_cell({ r: 0, c });
+        if (!ws[ref]) ws[ref] = { v: '', t: 's' };
+        ws[ref].s = titleStyle;
+      }
+      // ── Subtítulo (linha 1) ──
+      for (let c = 0; c < totalCols; c++) {
+        const ref = XLSX.utils.encode_cell({ r: 1, c });
+        if (!ws[ref]) ws[ref] = { v: '', t: 's' };
+        ws[ref].s = subtitleStyle;
+      }
+      // ── Data (linha 2) ──
+      for (let c = 0; c < totalCols; c++) {
+        const ref = XLSX.utils.encode_cell({ r: 2, c });
+        if (!ws[ref]) ws[ref] = { v: '', t: 's' };
+        ws[ref].s = dateStyle;
+      }
+      // ── Headers (linha 4) ──
+      for (let c = 0; c < totalCols; c++) {
+        const ref = XLSX.utils.encode_cell({ r: headerRow, c });
+        if (ws[ref]) ws[ref].s = headerStyle;
+      }
+
+      // ── Data rows (linhas 5+) ──
+      for (let r = 0; r < rows.length; r++) {
+        const isEven = r % 2 === 0;
+        const rowBg = isEven ? COLORS.slate50 : COLORS.zebraDark;
+        const setor = (items[r]?.setor ?? 'outros').toLowerCase();
+        const setorColor = SETOR_COLORS[setor] ?? SETOR_COLORS.outros;
+
+        for (let c = 0; c < totalCols; c++) {
+          const ref = XLSX.utils.encode_cell({ r: r + dataStartRow, c });
+          if (!ws[ref]) ws[ref] = { v: '', t: 's' };
+          const cell = ws[ref];
+
+          if (c === 0) {
+            // Equipamento — bold, left-aligned, zebra bg
+            cell.s = {
+              font: { bold: true, sz: 11 },
+              fill: { fgColor: { rgb: rowBg } },
+              alignment: { horizontal: 'left' },
+              border: thinBorder,
+            };
+          } else if (c === 1) {
+            // Setor — cor específica do setor
+            cell.s = {
+              font: { bold: true, sz: 10, color: { rgb: setorColor.text } },
+              fill: { fgColor: { rgb: setorColor.bg } },
+              alignment: { horizontal: 'center' },
+              border: thinBorder,
+            };
+          } else if (c === 2) {
+            // Qtd. — número com zebra
+            cell.s = {
+              font: { bold: true, sz: 11 },
+              fill: { fgColor: { rgb: rowBg } },
+              alignment: { horizontal: 'center' },
+              border: thinBorder,
+            };
+          } else {
+            // Sep., Devol., OK, Qb, Pd — campos vazios com destaque para preenchimento manual
+            cell.s = {
+              fill: { fgColor: { rgb: COLORS.emptyField } },
+              alignment: { horizontal: 'center' },
+              border: {
+                top: { style: 'thin', color: { rgb: COLORS.emptyFieldBorder } },
+                bottom: { style: 'thin', color: { rgb: COLORS.emptyFieldBorder } },
+                left: { style: 'thin', color: { rgb: COLORS.emptyFieldBorder } },
+                right: { style: 'thin', color: { rgb: COLORS.emptyFieldBorder } },
+              },
+            };
+          }
+        }
+      }
+
+      // ── Rodapé ──
+      for (let c = 0; c < totalCols; c++) {
+        const ref = XLSX.utils.encode_cell({ r: footerRow, c });
+        if (!ws[ref]) ws[ref] = { v: '', t: 's' };
+        ws[ref].s = {
+          font: { bold: true, sz: 9, color: { rgb: COLORS.white } },
+          fill: { fgColor: { rgb: COLORS.indigo } },
+          alignment: { horizontal: 'center' },
+          border: thinBorder,
+        };
+      }
+
+      // ── Larguras de coluna ──
+      ws['!cols'] = [
+        { wch: 38 }, // Equipamento
+        { wch: 15 }, // Setor
+        { wch: 8 },  // Qtd.
+        { wch: 8 },  // Sep.
+        { wch: 8 },  // Devol.
+        { wch: 8 },  // OK
+        { wch: 8 },  // Qb
+        { wch: 8 },  // Pd
+      ];
+
+      // ── Merges ──
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },   // Título
+        { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },   // Subtítulo
+        { s: { r: 2, c: 0 }, e: { r: 2, c: totalCols - 1 } },   // Data
+        { s: { r: footerRow, c: 0 }, e: { r: footerRow, c: totalCols - 1 } }, // Rodapé
+      ];
+
+      // ── Altura das linhas ──
+      ws['!rows'] = [
+        { hpt: 30 }, // Título
+        { hpt: 20 }, // Subtítulo
+        { hpt: 16 }, // Data
+        { hpt: 10 }, // Espaço
+        { hpt: 22 }, // Headers
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, cl.nome.substring(0, 31));
+
+      // Download
+      XLSX.writeFile(wb, `checklist-${cl.id}-${cl.nome}.xlsx`);
+      addToast('success', 'Checklist exportado para Excel com sucesso.');
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao liberar');
+      console.error(err);
+      addToast('error', 'Erro ao exportar o checklist.');
     }
   }
 
@@ -232,10 +453,10 @@ export default function Checklists() {
     try {
       await checklistApi.cancelar(confirmCancel, motivo);
       setConfirmCancel(null);
-      addToast('success', 'Checklist cancelado');
+      addToast('success', 'Checklist cancelado com sucesso.');
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao cancelar');
+      addToast('error', err.response?.data?.message || 'Erro ao cancelar o checklist.');
     }
   }
 
@@ -255,10 +476,10 @@ export default function Checklists() {
         await refreshSelected(novoId);
         setModalItems(true);
       }
-      addToast('success', 'Checklist clonado (rascunho). Você pode renomear agora.');
+      addToast('success', 'Checklist clonado com sucesso como rascunho. Você pode renomear agora.');
       await load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao clonar');
+      addToast('error', err.response?.data?.message || 'Erro ao clonar o checklist.');
     }
   }
 
@@ -267,12 +488,12 @@ export default function Checklists() {
     if (!renameModal) return;
     try {
       await checklistApi.updateNome(renameModal.id, renameValue);
-      addToast('success', 'Nome do checklist atualizado');
+      addToast('success', 'Nome do checklist atualizado com sucesso.');
       setRenameModal(null);
       setRenameValue('');
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao renomear checklist');
+      addToast('error', err.response?.data?.message || 'Erro ao renomear o checklist.');
     }
   }
 
@@ -301,10 +522,10 @@ export default function Checklists() {
       setSelectedEquipment('');
       setQuantidade(1);
       setSetor('som');
-      addToast('success', 'Item adicionado ao checklist');
+      addToast('success', 'Item adicionado ao checklist com sucesso.');
       await refreshSelected(selected.id);
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao adicionar item');
+      addToast('error', err.response?.data?.message || 'Erro ao adicionar o item.');
     }
   }
 
@@ -318,7 +539,7 @@ export default function Checklists() {
       setSeparateQty(1);
       if (selected) await refreshSelected(selected.id);
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao separar');
+      addToast('error', err.response?.data?.message || 'Erro ao registrar a separação.');
     }
   }
 
@@ -327,13 +548,13 @@ export default function Checklists() {
     if (!returnModal) return;
     const totalReturn = returnOk + returnDanificado + returnPerdido;
     if (totalReturn === 0) {
-      addToast('error', 'Informe pelo menos uma quantidade para devolver');
+      addToast('error', 'Informe pelo menos uma quantidade para devolver.');
       return;
     }
 
     const remaining = returnModal.quantidadeSeparada - returnModal.quantidadeDevolvida;
     if (totalReturn > remaining) {
-      addToast('error', `Quantidade total (${totalReturn}) excede o restante (${remaining})`);
+      addToast('error', `A quantidade total informada (${totalReturn}) excede o restante disponível (${remaining}).`);
       return;
     }
 
@@ -347,7 +568,7 @@ export default function Checklists() {
       setReturnObservation('');
       if (selected) await refreshSelected(selected.id);
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao devolver');
+      addToast('error', err.response?.data?.message || 'Erro ao registrar a devolução.');
     }
   }
 
@@ -360,10 +581,10 @@ export default function Checklists() {
     try {
       await checklistItemApi.remove(confirmRemoveItem);
       setConfirmRemoveItem(null);
-      addToast('success', 'Item removido');
+      addToast('success', 'Item removido do checklist.');
       if (selected) await refreshSelected(selected.id);
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao remover');
+      addToast('error', err.response?.data?.message || 'Erro ao remover o item.');
     }
   }
 
@@ -371,11 +592,11 @@ export default function Checklists() {
     if (!editQtyModal || !selected) return;
     try {
       await checklistItemApi.update(editQtyModal.id, editQtyValue);
-      addToast('success', 'Quantidade atualizada');
+      addToast('success', 'Quantidade atualizada com sucesso.');
       setEditQtyModal(null);
       await refreshSelected(selected.id);
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao atualizar quantidade');
+      addToast('error', err.response?.data?.message || 'Erro ao atualizar a quantidade.');
     }
   }
 
@@ -389,7 +610,7 @@ export default function Checklists() {
   // Role-based permissions
   const canSeparate =
     !isAdmin &&
-    selected?.status === 'liberado';
+    ['liberado', 'em_evento', 'pendente_devolucao'].includes(selected?.status ?? '');
 
   // Employees can return items (data collection only)
   const canReturn =
@@ -537,26 +758,12 @@ export default function Checklists() {
               </button>
 
               {isAdmin && cl.status === 'rascunho' && (
-                <>
-                  <button
-                    onClick={() => handleLiberar(cl.id)}
-                    className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 hover:bg-emerald-100 transition-colors font-medium"
-                  >
-                    Liberar
-                  </button>
-                  <button
-                    onClick={() => handleClonar(cl.id)}
-                    className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-colors"
-                  >
-                    <Copy size={13} /> Clonar
-                  </button>
                   <button
                     onClick={() => setConfirmCancel(cl.id)}
                     className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 transition-colors"
                   >
                     <X size={13} /> Cancelar
                   </button>
-                </>
               )}
               {isAdmin && cl.status === 'liberado' && (
                 <button
@@ -656,7 +863,15 @@ export default function Checklists() {
               )}
             </div>
             <div className="flex gap-2 flex-wrap">
-              {isAdmin && selected && ['rascunho', 'liberado'].includes(selected.status) && (
+              {selected && (
+                <button
+                  onClick={() => handleBaixarChecklist(selected)}
+                  className="flex items-center gap-1.5 text-xs bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 px-3 py-1.5 rounded-lg font-medium transition-colors"
+                >
+                  Baixar Excel
+                </button>
+              )}
+              {isAdmin && selected && ['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(selected.status) && (
                 <button
                   onClick={() => setModalAddItem(true)}
                   className="flex items-center gap-1.5 text-xs bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-medium"
@@ -669,9 +884,9 @@ export default function Checklists() {
                   onClick={async () => {
                     try {
                       // Finalize via liberar → mark all done
-                      addToast('info', 'Funcionalidade de finalização em implementação');
+                      addToast('info', 'Funcionalidade de finalização em desenvolvimento.');
                     } catch (err: any) {
-                      addToast('error', err.response?.data?.message || 'Erro ao finalizar');
+                      addToast('error', err.response?.data?.message || 'Erro ao finalizar o checklist.');
                     }
                   }}
                   className="flex items-center gap-1.5 text-xs bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-medium"
@@ -996,12 +1211,12 @@ export default function Checklists() {
                             </span>
                           )}
                           {(item.quantidadeQuebrada ?? 0) > 0 && (
-                            <span className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 px-1.5 py-0.5 rounded font-medium">
+                            <span className="bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium">
                               {item.quantidadeQuebrada}✕
                             </span>
                           )}
                           {(item.quantidadePerdida ?? 0) > 0 && (
-                            <span className="bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium">
+                            <span className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 px-1.5 py-0.5 rounded font-medium">
                               {item.quantidadePerdida}?
                             </span>
                           )}
@@ -1056,7 +1271,7 @@ export default function Checklists() {
                               Editar qtd
                             </button>
                           )}
-                          {isAdmin && selected && ['rascunho', 'liberado'].includes(selected.status) && (
+                          {isAdmin && selected && ['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(selected.status) && (
                             <button
                               onClick={() => setConfirmRemoveItem(item.id)}
                               className="text-xs font-medium text-red-600 dark:text-white hover:underline"
@@ -1122,36 +1337,18 @@ export default function Checklists() {
               onChange={setSelectedEquipment}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Quantidade
-              </label>
-              <div className="flex justify-center py-2">
-                <QuantityStepper value={quantidade} onChange={setQuantidade} min={1} />
-              </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Quantidade
+            </label>
+            <div className="flex justify-center py-2">
+              <QuantityStepper value={quantidade} onChange={setQuantidade} min={1} max={equipments.find(eq => String(eq.id) === selectedEquipment)?.quantidadeDisponivel ?? 999} />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Setor
-              </label>
-              <div className="flex gap-1.5 flex-wrap">
-                {SETORES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setSetor(s)}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                      setor === s
-                        ? 'bg-indigo-500 text-white'
-                        : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                    }`}
-                  >
-                    {s.charAt(0).toUpperCase() + s.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {selectedEquipment && (
+              <p className="text-xs text-slate-400 mt-1 text-center">
+                Disponível: {equipments.find(eq => String(eq.id) === selectedEquipment)?.quantidadeDisponivel ?? 0}
+              </p>
+            )}
           </div>
           <button
             type="submit"
@@ -1238,8 +1435,8 @@ export default function Checklists() {
               <div className="space-y-3">
                 {[
                   { key: 'ok' as const, label: '✓ OK', color: 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10', value: returnOk, setter: setReturnOk },
-                  { key: 'dano' as const, label: '✕ Danificado', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10', value: returnDanificado, setter: setReturnDanificado },
-                  { key: 'perda' as const, label: '? Perdido', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10', value: returnPerdido, setter: setReturnPerdido },
+                  { key: 'dano' as const, label: '✕ Danificado', color: 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10', value: returnDanificado, setter: setReturnDanificado },
+                  { key: 'perda' as const, label: '? Perdido', color: 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10', value: returnPerdido, setter: setReturnPerdido },
                 ].map(({ key, label, color, value, setter }) => (
                   <div key={key} className={`flex items-center justify-between rounded-xl border p-3 ${color}`}>
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -1304,7 +1501,7 @@ export default function Checklists() {
         {editQtyModal && (
           <div className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou além), o sistema ajusta o estoque automaticamente.
+              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou além), o sistema ajustará o estoque automaticamente.
             </p>
             <div className="flex justify-center py-2">
               <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} />

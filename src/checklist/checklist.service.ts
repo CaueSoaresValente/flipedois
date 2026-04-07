@@ -311,7 +311,7 @@ export class ChecklistService {
     const novoChecklist = this.checklistRepository.create({
       nome: nomeFinal,
       status: 'rascunho',
-      // Cópia NÍO herda o evento — admin vincula manualmente
+      // Cópia NÃO herda o evento — admin vincula manualmente
     });
 
     const checklistSalvo = await this.checklistRepository.save(novoChecklist);

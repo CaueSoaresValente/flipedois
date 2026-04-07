@@ -215,11 +215,7 @@ export class EventService {
 
   /**
    * CANCELAR EVENTO: Reverte todas as reservas de estoque ativas.
-   *
-   * Para cada checklist liberado/em_evento:
-   *   - Reverte quantidades planejadas de volta ao disponível
-   *   - Define checklist como cancelado
-   * Define evento como cancelado.
+   * Checklists vinculados também são cancelados e seus itens voltam ao estoque.
    */
   async cancelar(
     id: number,
@@ -266,9 +262,6 @@ export class EventService {
             ['em_evento', 'pendente_devolucao'].includes(checklist.status)
           ) {
             // Calcular o que REALMENTE saiu de emUso:
-            // - OK → saiu de emUso via registrarDevolucaoOk
-            // - DANO/PERDA BAIXADO → saiu de emUso via confirmarBaixa
-            // - DANO/PERDA PENDENTE → AINDA em emUso (estoque não mudou)
             const occurrences = await manager.find(EquipmentOccurrence, {
               where: { checklistItemId: item.id },
             });
@@ -310,7 +303,7 @@ export class EventService {
       event.canceladoPor = userEmail ?? undefined;
       event.canceladoEm = new Date();
       
-      // 🔴 CRITICAL RULE: Cancelled event = Finalized event
+      // Cancelled event = Finalized event
       event.finalizadoPor = userEmail ?? undefined;
       event.finalizadoEm = new Date();
 
@@ -324,6 +317,59 @@ export class EventService {
         id,
         { motivo, status: 'cancelado' },
         `Evento "${event.nome}" cancelado: ${motivo}`,
+      );
+
+      return saved;
+    });
+  }
+
+  /**
+   * REATIVAR EVENTO: Desfaz o cancelamento.
+   * Evento volta para 'ativo' e checklists voltam para 'rascunho'.
+   */
+  async reativar(id: number, userId?: number, userEmail?: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const event = await manager.findOne(Event, {
+        where: { id },
+        relations: ['checklists'],
+      });
+
+      if (!event) throw new BadRequestException('Evento não encontrado.');
+
+      if (event.status !== 'cancelado') {
+        throw new BadRequestException('Apenas eventos cancelados podem ser reativados.');
+      }
+
+      // Reativar checklists: todos voltam para rascunho
+      if (event.checklists) {
+        for (const checklist of event.checklists) {
+          await manager.update(Checklist, checklist.id, {
+            status: 'rascunho',
+            motivoCancelamento: undefined,
+            canceladoPor: undefined,
+            canceladoEm: undefined,
+          });
+        }
+      }
+
+      // Reativar evento
+      event.status = 'ativo';
+      event.motivoCancelamento = undefined;
+      event.canceladoPor = undefined;
+      event.canceladoEm = undefined;
+      event.finalizadoPor = undefined;
+      event.finalizadoEm = undefined;
+
+      const saved = await manager.save(Event, event);
+
+      await this.auditLogService.log(
+        userId ?? null,
+        userEmail ?? null,
+        'REATIVAR',
+        'event',
+        id,
+        { status: 'ativo', checklists: 'rascunho' },
+        `Evento "${event.nome}" reativado. Checklists voltaram para rascunho.`,
       );
 
       return saved;
@@ -417,10 +463,6 @@ export class EventService {
     }
   }
 
-  /**
-   * CLONAR EVENTO: Clona o evento com toda a sua equipe e checklists vinculados.
-   * Checklists clonados nascem com status 'rascunho' (sem reservar estoque).
-   */
   async clonar(id: number, userId?: number, userEmail?: string) {
     const original = await this.repo.findOne({
       where: { id },
@@ -429,7 +471,6 @@ export class EventService {
 
     if (!original) throw new BadRequestException('Evento não encontrado.');
 
-    // Cria cópia do evento
     const novoEvento = this.repo.create({
       nome: `${original.nome} (cópia)`,
       cliente: original.cliente,
@@ -441,7 +482,6 @@ export class EventService {
     });
     const eventoSalvo = await this.repo.save(novoEvento);
 
-    // Clona equipe
     for (const m of original.equipe ?? []) {
       await this.teamRepo.save(
         this.teamRepo.create({
@@ -452,16 +492,8 @@ export class EventService {
       );
     }
 
-    // Validação de estoque para itens clonados
-    const alertasEstoque: {
-      equipmentId: number;
-      nome: string;
-      disponivel: number;
-      solicitado: number;
-      checklistNome: string;
-    }[] = [];
+    const alertasEstoque: any[] = [];
 
-    // Clona checklists vinculados (todos nascem rascunho, sem reservar estoque)
     for (const cl of original.checklists ?? []) {
       const novoCl = await this.checklistRepo.save(
         this.checklistRepo.create({
@@ -476,37 +508,15 @@ export class EventService {
       });
 
       for (const item of items) {
-        // Busca equipamento atual para snapshot e validação de estoque
-        const equipmentRepo =
-          this.checklistItemRepo.manager.getRepository(Equipment);
-        const equipment = await equipmentRepo.findOne({
-          where: { id: item.equipmentId },
-        });
-
-        const nomeSnapshot = equipment?.nome ?? item.nomeSnapshot;
-        const descricaoSnapshot =
-          equipment?.descricao ?? item.descricaoSnapshot;
-
-        // Verifica saldo disponível
-        if (
-          equipment &&
-          item.quantidadePlanejada > equipment.quantidadeDisponivel
-        ) {
-          alertasEstoque.push({
-            equipmentId: item.equipmentId,
-            nome: nomeSnapshot,
-            disponivel: equipment.quantidadeDisponivel,
-            solicitado: item.quantidadePlanejada,
-            checklistNome: cl.nome,
-          });
-        }
+        const nameSnapshot = item.nomeSnapshot;
+        const descricaoSnapshot = item.descricaoSnapshot;
 
         await this.checklistItemRepo.save(
           this.checklistItemRepo.create({
             checklistId: novoCl.id,
             equipmentId: item.equipmentId,
-            nomeSnapshot,
-            descricaoSnapshot,
+            nomeSnapshot: nameSnapshot,
+            descricaoSnapshot: descricaoSnapshot,
             quantidadePlanejada: item.quantidadePlanejada,
             setor: item.setor,
           }),
@@ -520,15 +530,10 @@ export class EventService {
       'CLONAR',
       'event',
       eventoSalvo.id,
-      { originalId: id, alertasEstoque: alertasEstoque.length },
-      `Evento clonado de "${original.nome}" como "${eventoSalvo.nome}"${alertasEstoque.length > 0 ? ` (${alertasEstoque.length} item(ns) com estoque insuficiente)` : ''}`,
+      { originalId: id },
+      `Evento clonado de "${original.nome}"`,
     );
 
-    const evento = await this.repo.findOne({
-      where: { id: eventoSalvo.id },
-      relations: ['checklists', 'checklists.items', 'equipe'],
-    });
-
-    return { evento, alertasEstoque };
+    return { evento: eventoSalvo };
   }
 }

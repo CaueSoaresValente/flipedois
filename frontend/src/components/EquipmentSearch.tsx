@@ -52,7 +52,7 @@ export default function EquipmentSearch({
                             {selected.nome}
                         </span>
                         <span className="text-xs text-slate-400 ml-2">
-                            (disp: {selected.quantidadeDisponivel})
+                            (disp: {selected.quantidadeDisponivel}{selected.origem === 'alugado' ? ' · Alugado' : ''})
                         </span>
                     </div>
                     <button
@@ -115,7 +115,7 @@ export default function EquipmentSearch({
                                             }`}
                                     >
                                         {eq.origem === 'alugado'
-                                            ? 'Alugado'
+                                            ? `${eq.quantidadeDisponivel} disp. (Alugado)`
                                             : `${eq.quantidadeDisponivel} disp.`}
                                     </span>
                                 </div>

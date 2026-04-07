@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Calendar, Plus, Users as UsersIcon, Edit3, CheckCircle, CheckCircle2, XCircle, Ban, Copy, ChevronDown, ChevronUp, PackageCheck, RotateCcw, ClipboardList, X, AlertCircle, Search, Trash2, Archive } from 'lucide-react';
 import { eventApi, checklistApi, checklistItemApi, equipmentApi } from '../services/api';
-import * as XLSX from 'xlsx';
+
 import Modal from '../components/Modal';
 import ConfirmModal from '../components/ConfirmModal';
 import StatusBadge from '../components/StatusBadge';
@@ -209,7 +209,7 @@ export default function Eventos() {
       setChecklistParentEventId(eventId ?? null);
       setModalChecklist(true);
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao abrir checklist');
+      addToast('error', err.response?.data?.message || 'Erro ao abrir o checklist.');
     }
   }
 
@@ -230,24 +230,24 @@ export default function Eventos() {
         quantidadePlanejada: quantidade,
         setor,
       });
-      addToast('success', 'Item adicionado');
+      addToast('success', 'Item adicionado ao checklist com sucesso.');
       setModalAddItem(false);
       setSelectedEquipment('');
       setQuantidade(1);
       setSetor('som');
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao adicionar item');
+      addToast('error', err.response?.data?.message || 'Erro ao adicionar o item.');
     }
   }
 
   async function handleRemoveItemFromChecklist(itemId: number) {
     try {
       await checklistItemApi.remove(itemId);
-      addToast('success', 'Item removido');
+      addToast('success', 'Item removido do checklist.');
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao remover item');
+      addToast('error', err.response?.data?.message || 'Erro ao remover o item.');
     }
   }
 
@@ -255,71 +255,15 @@ export default function Eventos() {
     if (!editQtyItem) return;
     try {
       await checklistItemApi.update(editQtyItem.id, editQtyValue);
-      addToast('success', 'Quantidade atualizada');
+      addToast('success', 'Quantidade atualizada com sucesso.');
       setEditQtyItem(null);
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao atualizar quantidade');
+      addToast('error', err.response?.data?.message || 'Erro ao atualizar a quantidade.');
     }
   }
 
-  async function handleBaixarChecklist(checklistId: number) {
-    try {
-      const r = await checklistApi.getOne(checklistId);
-      const cl = r.data as ChecklistData;
 
-      // Build data rows
-      const headers = ['Equipamento', 'Setor', 'Planejado', 'Separado', 'Devolvido', 'OK', 'Quebrado', 'Perdido'];
-      const rows = (cl.items ?? []).map((i) => [
-        i.nomeSnapshot,
-        i.setor,
-        i.quantidadePlanejada ?? 0,
-        i.quantidadeSeparada ?? 0,
-        i.quantidadeDevolvida ?? 0,
-        i.quantidadeOk ?? 0,
-        i.quantidadeQuebrada ?? 0,
-        i.quantidadePerdida ?? 0,
-      ]);
-
-      // Create workbook and worksheet
-      const wb = XLSX.utils.book_new();
-
-      // Title rows
-      const wsData = [
-        [`Checklist: ${cl.nome}`],
-        [`Status: ${cl.status}`],
-        [],
-        headers,
-        ...rows,
-      ];
-
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-      // Auto-width columns
-      const colWidths = headers.map((h, i) => {
-        const maxLen = Math.max(
-          h.length,
-          ...rows.map((r) => String(r[i] ?? '').length)
-        );
-        return { wch: Math.max(maxLen + 2, 12) };
-      });
-      ws['!cols'] = colWidths;
-
-      // Merge title row across all columns
-      ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
-      ];
-
-      XLSX.utils.book_append_sheet(wb, ws, cl.nome.substring(0, 31));
-
-      // Download
-      XLSX.writeFile(wb, `checklist-${cl.id}-${cl.nome}.xlsx`);
-      addToast('success', 'Checklist baixado (Excel)');
-    } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao baixar checklist');
-    }
-  }
 
   // === Checklist actions directly inside the event card ===
 
@@ -327,46 +271,21 @@ export default function Eventos() {
     if (!checklistModal) return;
     try {
       await checklistApi.liberar(checklistModal.id);
-      addToast('success', 'Checklist liberado! Estoque reservado.');
+      addToast('success', 'Checklist liberado com sucesso! Estoque reservado.');
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao liberar checklist');
+      addToast('error', err.response?.data?.message || 'Erro ao liberar o checklist.');
     }
   }
 
-  async function handleCancelarChecklist() {
-    if (!checklistModal) return;
+  async function handleReativarEvento(ev: EventItem) {
+    if (!isAdmin) return;
     try {
-      await checklistApi.cancelar(checklistModal.id, 'Cancelado via card do evento');
-      addToast('success', 'Checklist cancelado. Estoque restaurado.');
-      await refreshChecklistModal();
-    } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao cancelar checklist');
-    }
-  }
-
-  async function handleClonarChecklist() {
-    if (!checklistModal) return;
-    try {
-      const res = await checklistApi.clonar(checklistModal.id);
-      if (res.data.alertas?.length > 0) {
-        res.data.alertas.forEach((a: string) => addToast('warning', a));
-      }
-      const novoId = res.data?.checklist?.id;
-      const nomeNovo = res.data?.checklist?.nome ?? 'Novo checklist';
-      const itensBaixoEstoque = (res.data?.itensEstoqueInsuficiente ?? []) as { nome: string }[];
-      setLowStockNames(itensBaixoEstoque.map((i) => i.nome));
-      if (novoId) {
-        setRenameModal({ id: novoId, nome: nomeNovo });
-        setRenameValue(nomeNovo);
-        // Open the cloned checklist
-        const clRes = await checklistApi.getOne(novoId);
-        setChecklistModal(clRes.data);
-      }
-      addToast('success', 'Checklist clonado (rascunho). Voce pode renomear agora.');
+      await eventApi.reativar(ev.id);
+      addToast('success', `Evento "${ev.nome}" reativado. Checklists voltaram para rascunho.`);
       await load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao clonar checklist');
+      addToast('error', err.response?.data?.message || 'Erro ao reativar o evento.');
     }
   }
 
@@ -374,27 +293,14 @@ export default function Eventos() {
     if (!checklistModal) return;
     try {
       await checklistApi.reativar(checklistModal.id);
-      addToast('success', 'Checklist reativado');
+      addToast('success', 'Checklist reativado com sucesso.');
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao reativar checklist');
+      addToast('error', err.response?.data?.message || 'Erro ao reativar o checklist.');
     }
   }
 
-  async function handleRenameChecklist(e: React.FormEvent) {
-    e.preventDefault();
-    if (!renameModal) return;
-    try {
-      await checklistApi.updateNome(renameModal.id, renameValue);
-      addToast('success', 'Nome do checklist atualizado');
-      setRenameModal(null);
-      setRenameValue('');
-      await refreshChecklistModal();
-      await load();
-    } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao renomear checklist');
-    }
-  }
+
 
   // Separation handler
   async function handleSeparar() {
@@ -407,7 +313,7 @@ export default function Eventos() {
       setSeparateQty(1);
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao separar');
+      addToast('error', err.response?.data?.message || 'Erro ao registrar a separação.');
     }
   }
 
@@ -416,12 +322,12 @@ export default function Eventos() {
     if (!returnModal) return;
     const totalReturn = returnOk + returnDanificado + returnPerdido;
     if (totalReturn <= 0) {
-      addToast('error', 'Informe pelo menos uma quantidade para devolver');
+      addToast('error', 'Informe pelo menos uma quantidade para devolver.');
       return;
     }
     const remaining = returnModal.quantidadeSeparada - returnModal.quantidadeDevolvida;
     if (totalReturn > remaining) {
-      addToast('error', `Quantidade total (${totalReturn}) excede o restante (${remaining})`);
+      addToast('error', `A quantidade total informada (${totalReturn}) excede o restante disponível (${remaining}).`);
       return;
     }
     try {
@@ -434,7 +340,7 @@ export default function Eventos() {
       setReturnObservation('');
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao devolver');
+      addToast('error', err.response?.data?.message || 'Erro ao registrar a devolução.');
     }
   }
 
@@ -447,7 +353,7 @@ export default function Eventos() {
       setConfirmBatchApproval(false);
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao aprovar em lote');
+      addToast('error', err.response?.data?.message || 'Erro ao aprovar as ocorrências em lote.');
     }
   }
 
@@ -457,19 +363,19 @@ export default function Eventos() {
     try {
       await checklistItemApi.remove(confirmRemoveItem);
       setConfirmRemoveItem(null);
-      addToast('success', 'Item removido');
+      addToast('success', 'Item removido do checklist.');
       await refreshChecklistModal();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao remover');
+      addToast('error', err.response?.data?.message || 'Erro ao remover o item.');
     }
   }
 
   // Role-based checklist permissions
-  const canSeparate = !isAdmin && checklistModal?.status === 'liberado';
+  const canSeparate = !isAdmin && ['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
   // 🔴 Employee can return items with mixed selection (OK/Danificado/Perdido)
-  const canEmployeeReturn = !isAdmin && ['em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
-  // 🔴 Planned quantity is IMMUTABLE during return phase
-  const canEditPlanned = isAdmin && ['rascunho', 'liberado', 'em_evento'].includes(checklistModal?.status ?? '') && checklistModal?.status !== 'cancelado';
+  const canEmployeeReturn = !isAdmin && ['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
+  // 🔴 Planned quantity is IMMUTABLE during return phase (unless it's increased while not complete)
+  const canEditPlanned = isAdmin && ['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '') && checklistModal?.status !== 'cancelado';
 
   // Count pending items for batch approval panel
   const pendingApprovalItems = (checklistModal?.items ?? []).filter((i) => i.statusDevolucao === 'aguardando_confirmacao');
@@ -486,13 +392,13 @@ export default function Eventos() {
     if (!createChecklistForEventId || !newChecklistNome.trim()) return;
     try {
       await checklistApi.create(newChecklistNome, createChecklistForEventId);
-      addToast('success', `Checklist "${newChecklistNome}" criado`);
+      addToast('success', `Checklist "${newChecklistNome}" criado com sucesso.`);
       setModalCreateChecklist(false);
       setNewChecklistNome('');
       setCreateChecklistForEventId(null);
       await load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao criar checklist');
+      addToast('error', err.response?.data?.message || 'Erro ao criar o checklist.');
     }
   }
 
@@ -500,7 +406,7 @@ export default function Eventos() {
     e.preventDefault();
     try {
       if (!validateDates(dataInicio, dataFim)) {
-        addToast('error', 'Data de inicio deve ser anterior a data de fim');
+        addToast('error', 'A data de início deve ser anterior ou igual à data de fim.');
         return;
       }
       await eventApi.create({
@@ -517,7 +423,7 @@ export default function Eventos() {
       addToast('success', 'Evento criado com sucesso');
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao criar evento');
+      addToast('error', err.response?.data?.message || 'Erro ao criar o evento.');
     }
   }
 
@@ -527,10 +433,10 @@ export default function Eventos() {
       await eventApi.cancelar(confirmCancelar.id, motivoCancelamento);
       setConfirmCancelar(null);
       setMotivoCancelamento('');
-      addToast('success', `Evento "${confirmCancelar.nome}" cancelado`);
+      addToast('success', `Evento "${confirmCancelar.nome}" cancelado com sucesso.`);
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao cancelar evento');
+      addToast('error', err.response?.data?.message || 'Erro ao cancelar o evento.');
       setConfirmCancelar(null);
     }
   }
@@ -566,7 +472,7 @@ export default function Eventos() {
     if (!selectedEvent) return;
     try {
       if (!validateDates(editDataInicio, editDataFim)) {
-        addToast('error', 'Data de inicio deve ser anterior a data de fim');
+        addToast('error', 'A data de início deve ser anterior ou igual à data de fim.');
         return;
       }
       await eventApi.update(selectedEvent.id, {
@@ -581,7 +487,7 @@ export default function Eventos() {
       addToast('success', 'Evento atualizado com sucesso');
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao editar evento');
+      addToast('error', err.response?.data?.message || 'Erro ao editar o evento.');
     }
   }
 
@@ -590,10 +496,10 @@ export default function Eventos() {
     try {
       await eventApi.finalizar(confirmFinalizar.id);
       setConfirmFinalizar(null);
-      addToast('success', `Evento "${confirmFinalizar.nome}" finalizado`);
+      addToast('success', `Evento "${confirmFinalizar.nome}" finalizado com sucesso!`);
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao finalizar evento');
+      addToast('error', err.response?.data?.message || 'Erro ao finalizar o evento.');
       setConfirmFinalizar(null);
     }
   }
@@ -606,14 +512,14 @@ export default function Eventos() {
       const alertas = result.alertasEstoque ?? [];
 
       if (alertas.length > 0) {
-        const nomes = alertas.map((a) => `${a.nome} (disp: ${a.disponivel}, sol: ${a.solicitado})`).join(', ');
-        addToast('warning', `Evento clonado: "${novo?.nome}". âš ï¸ Itens com estoque insuficiente: ${nomes}. Ajuste antes de liberar.`);
+        const nomes = alertas.map((a) => `${a.nome} (disponível: ${a.disponivel}, solicitado: ${a.solicitado})`).join(', ');
+        addToast('warning', `Evento clonado com sucesso: "${novo?.nome}". Itens com estoque insuficiente: ${nomes}. Ajuste antes de liberar.`);
       } else {
-        addToast('success', `Evento clonado: "${novo?.nome ?? 'copia'}"`);
+        addToast('success', `Evento clonado com sucesso: "${novo?.nome ?? 'cópia'}"`);
       }
       await load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao clonar evento');
+      addToast('error', err.response?.data?.message || 'Erro ao clonar o evento.');
     }
   }
 
@@ -636,7 +542,7 @@ export default function Eventos() {
       const updated = res.data.data.find((ev: EventItem) => ev.id === selectedEvent.id);
       if (updated) setSelectedEvent(updated);
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao adicionar membro');
+      addToast('error', err.response?.data?.message || 'Erro ao adicionar o membro à equipe.');
     }
   }
 
@@ -650,7 +556,7 @@ export default function Eventos() {
         if (updated) setSelectedEvent(updated);
       }
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao remover membro');
+      addToast('error', err.response?.data?.message || 'Erro ao remover o membro da equipe.');
     }
   }
 
@@ -667,11 +573,11 @@ export default function Eventos() {
     if (!confirmArchive) return;
     try {
       await eventApi.arquivar(confirmArchive.id);
-      addToast('success', `Evento "${confirmArchive.nome}" arquivado.`);
+      addToast('success', `Evento "${confirmArchive.nome}" arquivado com sucesso.`);
       setConfirmArchive(null);
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao arquivar evento');
+      addToast('error', err.response?.data?.message || 'Erro ao arquivar o evento.');
     }
   }
 
@@ -791,13 +697,6 @@ export default function Eventos() {
                       <Edit3 size={13} /> Editar
                     </button>
                     <button
-                      onClick={() => handleClonarEvento(ev)}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors"
-                      title="Clonar evento (inclui checklists e equipe)"
-                    >
-                      <Copy size={13} /> Clonar
-                    </button>
-                    <button
                       onClick={() => { setConfirmCancelar(ev); setMotivoCancelamento(''); }}
                       className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
                       title="Cancelar evento"
@@ -805,6 +704,24 @@ export default function Eventos() {
                       <Ban size={13} /> Cancelar
                     </button>
                   </>
+                )}
+                {isAdmin && ev.status === 'cancelado' && (
+                  <button
+                    onClick={() => handleReativarEvento(ev)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
+                    title="Reativar evento (volta para rascunho)"
+                  >
+                    <RotateCcw size={13} /> Reativar Evento
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    onClick={() => handleClonarEvento(ev)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors"
+                    title="Clonar evento (inclui checklists e equipe)"
+                  >
+                    <Copy size={13} /> Clonar
+                  </button>
                 )}
                 {isAdmin && (
                   <button
@@ -857,16 +774,7 @@ export default function Eventos() {
                         >
                           Abrir
                         </button>
-                        {cl.status === 'rascunho' && isAdmin && (
-                          <button
-                            type="button"
-                            onClick={() => openChecklistModal(cl.id, ev.id)}
-                            className="text-xs px-2 py-1 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors font-medium"
-                            title="Abrir para liberar"
-                          >
-                            Liberar
-                          </button>
-                        )}
+
                       </div>
                     </div>
                   ))}
@@ -909,7 +817,7 @@ export default function Eventos() {
             {isAdmin && ev.status !== 'finalizado' && ev.checklists?.length > 0 && !canFinalizar(ev) && (
               <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
                 <XCircle size={14} />
-                Aguardando conclusao dos checklists
+                Aguardando conclusão dos checklists
               </div>
             )}
           </div>
@@ -1221,13 +1129,7 @@ export default function Eventos() {
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
                 <StatusBadge status={checklistModal.status} />
-                <button
-                  type="button"
-                  onClick={() => handleBaixarChecklist(checklistModal.id)}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors font-medium"
-                >
-                  Baixar Excel
-                </button>
+
                 {isAdmin && checklistModal.status === 'rascunho' && (checklistModal.items?.length ?? 0) > 0 && (
                   <button
                     type="button"
@@ -1237,15 +1139,8 @@ export default function Eventos() {
                     ✓ Liberar Checklist
                   </button>
                 )}
-                {isAdmin && ['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal.status) && (
-                  <button
-                    type="button"
-                    onClick={handleCancelarChecklist}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors font-medium"
-                  >
-                    ✖ Cancelar
-                  </button>
-                )}
+                {/* Botão de Cancelar Checklist individual removido conforme pedido (cancelamento centralizado no Evento) */}
+
                 {isAdmin && checklistModal.status === 'cancelado' && (
                   <button
                     type="button"
@@ -1255,18 +1150,10 @@ export default function Eventos() {
                     <RotateCcw size={13} className="inline mr-1" />Reativar
                   </button>
                 )}
-                {isAdmin && (
-                  <button
-                    type="button"
-                    onClick={handleClonarChecklist}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors font-medium"
-                  >
-                    <Copy size={13} className="inline mr-1" />Clonar
-                  </button>
-                )}
+
               </div>
 
-              {isAdmin && ['rascunho', 'liberado'].includes(checklistModal.status) && (
+              {isAdmin && ['rascunho', 'liberado', 'em_evento'].includes(checklistModal.status) && (
                 <button
                   type="button"
                   onClick={() => setModalAddItem(true)}
@@ -1277,8 +1164,8 @@ export default function Eventos() {
               )}
             </div>
 
-            {/* Return progress panel */}
-            {['em_evento', 'pendente_devolucao'].includes(checklistModal.status) && totalSeparados > 0 && (
+            {/* Return progress panel - Show in any active phase if something was separated */}
+            {['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal.status) && totalSeparados > 0 && (
               <div className={`rounded-xl border p-4 ${
                 pendingReturnItems.length > 0
                   ? 'border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20'
@@ -1306,7 +1193,7 @@ export default function Eventos() {
             )}
 
             {/* Separation progress for employee - Enhanced UI */}
-            {!isAdmin && checklistModal.status === 'liberado' && (
+            {!isAdmin && (checklistModal.status === 'liberado' || pendingItems.length > 0) && (
               <div className="space-y-4">
                 {/* Progress bar and stats */}
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
@@ -1522,10 +1409,10 @@ export default function Eventos() {
                               <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeOk}✓</span>
                             )}
                             {(item.quantidadeQuebrada ?? 0) > 0 && (
-                              <span className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeQuebrada}✕</span>
+                              <span className="bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadeQuebrada}✕</span>
                             )}
                             {(item.quantidadePerdida ?? 0) > 0 && (
-                              <span className="bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadePerdida}?</span>
+                              <span className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 px-1.5 py-0.5 rounded font-medium">{item.quantidadePerdida}?</span>
                             )}
                             {(item.quantidadeOk ?? 0) === 0 && (item.quantidadeQuebrada ?? 0) === 0 && (item.quantidadePerdida ?? 0) === 0 && (
                               <span className="text-slate-400">-</span>
@@ -1573,7 +1460,7 @@ export default function Eventos() {
                                 Editar qtd
                               </button>
                             )}
-                            {isAdmin && ['rascunho', 'liberado'].includes(checklistModal.status) && (
+                            {isAdmin && ['rascunho', 'liberado', 'em_evento'].includes(checklistModal.status) && (
                               <button
                                 onClick={() => setConfirmRemoveItem(item.id)}
                                 className="text-xs font-medium px-2 py-1 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
@@ -1607,28 +1494,16 @@ export default function Eventos() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Equipamento</label>
             <EquipmentSearch equipments={equipments} value={selectedEquipment} onChange={setSelectedEquipment} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
-              <div className="flex justify-center py-2">
-                <QuantityStepper value={quantidade} onChange={setQuantidade} min={1} />
-              </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
+            <div className="flex justify-center py-2">
+              <QuantityStepper value={quantidade} onChange={setQuantidade} min={1} max={equipments.find(eq => String(eq.id) === selectedEquipment)?.quantidadeDisponivel ?? 999} />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Setor</label>
-              <select
-                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
-                value={setor}
-                onChange={(e) => setSetor(e.target.value)}
-              >
-                <option value="som">Som</option>
-                <option value="luz">Luz</option>
-                <option value="video">Vídeo</option>
-                <option value="estrutura">Estrutura</option>
-                <option value="comunicacao">Comunicação</option>
-                <option value="outros">Outros</option>
-              </select>
-            </div>
+            {selectedEquipment && (
+              <p className="text-xs text-slate-400 mt-1 text-center">
+                Disponível: {equipments.find(eq => String(eq.id) === selectedEquipment)?.quantidadeDisponivel ?? 0}
+              </p>
+            )}
           </div>
           <button
             type="submit"
@@ -1649,7 +1524,7 @@ export default function Eventos() {
         {editQtyItem && (
           <div className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou alem), o sistema ajusta o estoque automaticamente.
+              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou além), o sistema ajustará o estoque automaticamente.
             </p>
             <div className="flex justify-center py-2">
               <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} />
@@ -1805,34 +1680,7 @@ export default function Eventos() {
         type="danger"
       />
 
-      {/* Rename cloned checklist */}
-      <Modal
-        open={renameModal !== null}
-        onClose={() => { setRenameModal(null); setRenameValue(''); }}
-        title={`Renomear Checklist - ${renameModal?.nome ?? ''}`}
-      >
-        <form onSubmit={handleRenameChecklist} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Nome/Titulo
-            </label>
-            <input
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              required
-              autoFocus
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={!renameValue.trim()}
-            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
-          >
-            Salvar
-          </button>
-        </form>
-      </Modal>
+
 
       {/* Create Checklist Modal */}
       <Modal

@@ -54,7 +54,7 @@ export class Equipment {
   origem: EquipmentOrigem;
 
   @Column({ default: 'som' })
-  setor: 'som' | 'luz' | 'video' | 'estrutura';
+  setor: string;
 
   @Column({ nullable: true })
   fornecedor?: string;

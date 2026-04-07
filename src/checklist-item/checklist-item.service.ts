@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ChecklistItem } from './checklist-item.entity';
-import { Checklist } from '../checklist/checklist.entity';
+import { Checklist, ChecklistStatus } from '../checklist/checklist.entity';
 import { Equipment } from '../equipment/equipment.entity';
 import { ChecklistItemHistoryService } from '../checklist-item-history/checklist-item-history.service';
 import { ChecklistItemHistory } from '../checklist-item-history/checklist-item-history.entity';
@@ -61,7 +61,7 @@ export class ChecklistItemService {
         throw new BadRequestException('Checklist não encontrado.');
       }
 
-      const editableStatuses = ['rascunho', 'liberado'];
+      const editableStatuses = ['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'];
       if (!editableStatuses.includes(checklist.status)) {
         throw new BadRequestException(
           `Não é possível adicionar itens a um checklist com status "${checklist.status}".`,
@@ -87,8 +87,8 @@ export class ChecklistItemService {
       }
 
       // Para rascunho: avisa se estoque insuficiente mas não bloqueia
-      // Para liberado: verifica e reserva
-      if (checklist.status === 'liberado') {
+      // Para ativo: verifica e reserva
+      if (checklist.status !== 'rascunho') {
         if (data.quantidadePlanejada > equipment.quantidadeDisponivel) {
           throw new BadRequestException(
             `Estoque insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}, Solicitado: ${data.quantidadePlanejada}.`,
@@ -115,13 +115,13 @@ export class ChecklistItemService {
         nomeSnapshot: equipment.nome,
         descricaoSnapshot: equipment.descricao,
         quantidadePlanejada: data.quantidadePlanejada,
-        setor: data.setor || (equipment as any).setor || 'som',
+        setor: (equipment as any).setor || 'som',
       });
 
       const saved = await manager.save(ChecklistItem, item);
 
-      // Se liberado: reserva estoque imediatamente
-      if (checklist.status === 'liberado') {
+      // Se ativo: reserva estoque imediatamente
+      if (checklist.status !== 'rascunho') {
         await this.stockService.reservarEstoque(
           manager,
           equipment.id,
@@ -144,6 +144,9 @@ export class ChecklistItemService {
         `Item "${equipment.nome}" adicionado ao checklist (status: ${checklist.status})`,
       );
 
+      // Recalcular status do checklist (pode voltar de em_evento → liberado)
+      await this.atualizarStatusChecklistTx(manager, data.checklistId);
+
       return saved;
     });
   }
@@ -158,7 +161,7 @@ export class ChecklistItemService {
   }
 
   // ==============================
-  // SEPARAÇÍO — Apenas tracking, estoque já foi reservado na liberação
+  // SEPARAÇÃO — Apenas tracking, estoque já foi reservado na liberação
   // ==============================
   async separarItem(
     itemId: number,
@@ -181,9 +184,17 @@ export class ChecklistItemService {
           throw new BadRequestException('Checklist cancelado.');
         }
 
-        if (item.checklist.status !== 'liberado') {
+        // Permitir separação se estiver liberado OU se estiver em evento/pendente_devolucao
+        // O status liberado é o padrão, mas em_evento/pendente_devolucao também devem permitir
+        // se houver itens que voltaram a ficar pendentes (ex: aumento de quantidade pelo admin)
+        const statusPermitidosParaSeparacao: ChecklistStatus[] = [
+          'liberado',
+          'em_evento',
+          'pendente_devolucao',
+        ];
+        if (!statusPermitidosParaSeparacao.includes(item.checklist.status)) {
           throw new BadRequestException(
-            `Checklist não está liberado para separação. Status atual: "${item.checklist.status}".`,
+            `Checklist não está em uma fase ativa para separação. Status atual: "${item.checklist.status}".`,
           );
         }
 
@@ -263,7 +274,7 @@ export class ChecklistItemService {
   }
 
   // ==============================
-  // DEVOLUÇÍO — MIXED RETURN (OK + Danificado + Perdido)
+  // DEVOLUÇÃO — MIXED RETURN (OK + Danificado + Perdido)
   // ==============================
   /**
    * Registra a devolução de um item do checklist.
@@ -275,14 +286,14 @@ export class ChecklistItemService {
    *   - quantidadeDanificada: itens com defeito
    *   - quantidadePerdida: itens extraviados
    *
-   * REGRA DE VALIDAÇÍO:
+   * REGRA DE VALIDAÇÃO:
    *   quantidadeOk + quantidadeDanificada + quantidadePerdida <= maxDevolvivel
    *   quantidadeOk + quantidadeDanificada + quantidadePerdida > 0
    *
    * COMPORTAMENTO:
    *   ✅ OK > 0: disponivel += OK, emUso -= OK (automático, sem aprovação)
-   *   ⚠️ DANIFICADO > 0: cria ocorrência PENDENTE, NÍO muda estoque
-   *   ⚠️ PERDIDO > 0: cria ocorrência PENDENTE, NÍO muda estoque
+   *   ⚠️ DANIFICADO > 0: cria ocorrência PENDENTE, NÃO muda estoque
+   *   ⚠️ PERDIDO > 0: cria ocorrência PENDENTE, NÃO muda estoque
    *
    * Estoque para DANO/PERDA SÓ muda quando Felipe confirma a ocorrência.
    */
@@ -340,7 +351,7 @@ export class ChecklistItemService {
         }
 
         // ============================================================
-        // 2. DANIFICADO — Cria ocorrência PENDENTE, NÍO muda estoque
+        // 2. DANIFICADO — Cria ocorrência PENDENTE, NÃO muda estoque
         // ============================================================
         if (quantidadeDanificada > 0) {
           await this.occurrenceService.registrarTx(
@@ -356,7 +367,7 @@ export class ChecklistItemService {
         }
 
         // ============================================================
-        // 3. PERDIDO — Cria ocorrência PENDENTE, NÍO muda estoque
+        // 3. PERDIDO — Cria ocorrência PENDENTE, NÃO muda estoque
         // ============================================================
         if (quantidadePerdida > 0) {
           await this.occurrenceService.registrarTx(
@@ -445,12 +456,20 @@ export class ChecklistItemService {
   ) {
     const checklist = await manager.findOne(Checklist, {
       where: { id: checklistId },
-      relations: ['items'],
     });
 
-    if (!checklist || !checklist.items.length) return;
+    if (!checklist) return;
 
-    const items = checklist.items;
+    // Não recalcular em status terminais
+    if (['concluido', 'cancelado'].includes(checklist.status)) return;
+    
+    // Busca os itens diretamente do banco para garantir dados frescos
+    const items = await manager.find(ChecklistItem, {
+      where: { checklistId },
+    });
+
+    // Se não tem itens, manter status atual (não rebaixar)
+    if (!items.length) return;
 
     const todosSeparados = items.every(
       (i: ChecklistItem) => i.quantidadeSeparada === i.quantidadePlanejada,
@@ -470,6 +489,8 @@ export class ChecklistItemService {
       (i: ChecklistItem) => i.statusDevolucao === 'aguardando_confirmacao',
     );
 
+    const statusAnterior = checklist.status;
+
     if (todosFinalizados) {
       checklist.status = 'concluido';
     } else if (algumAguardando || algumDevolvido) {
@@ -477,7 +498,15 @@ export class ChecklistItemService {
     } else if (todosSeparados) {
       checklist.status = 'em_evento';
     } else {
-      checklist.status = 'liberado';
+      // Nem tudo separado:
+      // Se já estava em em_evento ou além, NÃO rebaixar para liberado.
+      // Felipe edita à vontade e o status se mantém.
+      // Só atribui liberado se vinha de liberado ou rascunho.
+      if (['rascunho', 'liberado'].includes(statusAnterior)) {
+        checklist.status = 'liberado';
+      }
+      // Se era em_evento ou pendente_devolucao, mantém o status anterior
+      // (os itens novos/alterados serão separados pelo funcionário)
     }
 
     await manager.save(Checklist, checklist);
@@ -508,29 +537,30 @@ export class ChecklistItemService {
 
       const status = item.checklist.status;
 
-      // 🔴 BLOQUEIO: quantidade planejada é IMUTÁVEL durante fase de devolução
-      if (['pendente_devolucao', 'concluido'].includes(status)) {
+      // 🔴 BLOQUEIO: quantidade planejada é IMUTÁVEL apenas em status terminal
+      if (['concluido', 'cancelado'].includes(status)) {
         throw new BadRequestException(
-          'Não é possível alterar quantidade planejada durante a fase de devolução.',
+          'Não é possível alterar quantidade de item em checklist concluído ou cancelado.',
         );
       }
 
       if (
-        !['rascunho', 'liberado', 'em_evento'].includes(status)
+        !['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(status)
       ) {
         throw new BadRequestException(
           `Não é possível alterar quantidade de item em checklist com status "${status}".`,
         );
       }
 
-      // Não pode reduzir abaixo do que já foi separado
+      // Se a nova quantidade for menor que o já separado,
+      // ajustar quantidadeSeparada para o novo valor
+      // (o excesso é liberado automaticamente pelo delta de estoque)
       if (quantidade < item.quantidadeSeparada) {
-        throw new BadRequestException(
-          `Quantidade não pode ser menor que o já separado (${item.quantidadeSeparada}).`,
-        );
+        item.quantidadeSeparada = quantidade;
       }
 
-      const equipment = await this.equipmentRepository.findOne({
+      // 🔴 CORREÇÃO: Busca usando o manager para respeitar lock da transação
+      const equipment = await manager.findOne(Equipment, {
         where: { id: item.equipmentId },
       });
 
@@ -540,6 +570,14 @@ export class ChecklistItemService {
 
       const anterior = item.quantidadePlanejada;
       const delta = quantidade - anterior;
+
+      // 🛑 VALIDAÇÃO DE INTEGRIDADE: Não pode reduzir planejamento abaixo do que já voltou
+      const jaContabilizado = (item.quantidadeOk || 0) + (item.quantidadeQuebrada || 0) + (item.quantidadePerdida || 0);
+      if (quantidade < jaContabilizado) {
+        throw new BadRequestException(
+          `Não é possível reduzir para ${quantidade} unidades pois ${jaContabilizado} já foram devolvidas/baixadas (OK/QB/PD).`,
+        );
+      }
 
       if (status !== 'rascunho') {
         // Checklist com estoque reservado: ajustar conforme delta
@@ -566,7 +604,19 @@ export class ChecklistItemService {
       }
 
       item.quantidadePlanejada = quantidade;
+
+      // Recalcular statusSeparacao: se a nova quantidade excede o separado,
+      // o item volta a ficar pendente (precisa separar mais)
+      if (item.quantidadeSeparada >= quantidade) {
+        item.statusSeparacao = 'separado';
+      } else {
+        item.statusSeparacao = 'pendente';
+      }
+
       await manager.save(ChecklistItem, item);
+
+      // Recalcular status do checklist (pode voltar de em_evento → liberado)
+      await this.atualizarStatusChecklistTx(manager, item.checklistId);
 
       await this.auditLogService.log(
         userId ?? null,
@@ -574,8 +624,14 @@ export class ChecklistItemService {
         'UPDATE',
         'checklist_item',
         item.id,
-        { quantidadeAnterior: anterior, quantidadeNova: quantidade, delta },
-        `Quantidade atualizada: ${anterior} → ${quantidade}`,
+        { 
+          quantidadeAnterior: anterior, 
+          quantidadeNova: quantidade, 
+          delta,
+          jaContabilizado,
+          estoquePos: { disponivel: equipment.quantidadeDisponivel, emUso: equipment.quantidadeEmUso }
+        },
+        `Quantidade atualizada: ${anterior} → ${quantidade} (Delta estoque: ${delta > 0 ? '+' : ''}${delta})`,
       );
 
       return item;
@@ -593,22 +649,30 @@ export class ChecklistItemService {
 
       const status = item.checklist.status;
 
-      if (!['rascunho', 'liberado'].includes(status)) {
+      if (!['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(status)) {
         throw new BadRequestException(
-          `Só é possível remover itens de checklist em rascunho ou liberado. Status atual: "${status}".`,
+          `Só é possível remover itens de checklist em rascunho, liberado, em evento ou pendente de devolução. Status atual: "${status}".`,
         );
       }
 
-      // Se liberado: reverter TODA a reserva de estoque (separação é apenas tracking)
-      if (status === 'liberado') {
-        await this.stockService.liberarReserva(
-          manager,
-          item.equipmentId,
-          item.quantidadePlanejada,
-        );
+      // Se ativo: reverter a reserva de estoque correspondente ao que ainda está "em uso"
+      if (status !== 'rascunho' && status !== 'cancelado') {
+        const jaDevolvidoOuBaixado = (item.quantidadeOk || 0) + (item.quantidadeQuebrada || 0) + (item.quantidadePerdida || 0);
+        const emUsoNoItem = item.quantidadePlanejada - jaDevolvidoOuBaixado;
+        
+        if (emUsoNoItem > 0) {
+          await this.stockService.liberarReserva(
+            manager,
+            item.equipmentId,
+            emUsoNoItem,
+          );
+        }
       }
 
       await manager.delete(ChecklistItem, itemId);
+
+      // Recalcular status do checklist após remoção
+      await this.atualizarStatusChecklistTx(manager, item.checklistId);
 
       await this.auditLogService.log(
         userId ?? null,
@@ -616,8 +680,8 @@ export class ChecklistItemService {
         'DELETE',
         'checklist_item',
         itemId,
-        { equipmentNome: item.nomeSnapshot, checklistId: item.checklistId },
-        `Item "${item.nomeSnapshot}" removido do checklist`,
+        { equipmentNome: item.nomeSnapshot, checklistId: item.checklistId, status },
+        `Item "${item.nomeSnapshot}" removido do checklist (status: ${status})`,
       );
 
       return { message: 'Item removido com sucesso.' };
@@ -889,6 +953,12 @@ export class ChecklistItemService {
     checklistId: number,
   ) {
     try {
+      // Find the equipment physical total
+      const equipment = await manager.findOne(Equipment, {
+        where: { id: equipmentId },
+      });
+      if (!equipment) return null;
+
       // Find the event that owns this checklist
       const checklist = await manager.findOne(Checklist, {
         where: { id: checklistId },
@@ -898,11 +968,15 @@ export class ChecklistItemService {
       const eventoAtual = checklist?.event;
       if (!eventoAtual) return null;
 
+      // Find other active events with date overlap
       const outrosEventos = await manager
         .createQueryBuilder(Event, 'event')
         .leftJoinAndSelect('event.checklists', 'checklists')
         .leftJoinAndSelect('checklists.items', 'items')
         .where('event.id != :id', { id: eventoAtual.id })
+        .andWhere('event.status NOT IN (:...status)', {
+          status: ['finalizado', 'cancelado'],
+        })
         .andWhere('(event.dataInicio <= :fim AND event.dataFim >= :inicio)', {
           inicio: eventoAtual.dataInicio,
           fim: eventoAtual.dataFim,
@@ -912,7 +986,28 @@ export class ChecklistItemService {
 
       if (!outrosEventos.length) return null;
 
-      return '⚠ Este equipamento também está planejado para outro evento próximo';
+      // Calculate total needed across all overlapping events
+      const totalSoma = outrosEventos.reduce((acc, ev) => {
+        const itemQty = ev.checklists?.reduce((accCl, cl) => {
+          const item = cl.items?.find((i) => i.equipmentId === equipmentId);
+          return accCl + (item?.quantidadePlanejada ?? 0);
+        }, 0);
+        return acc + (itemQty ?? 0);
+      }, 0);
+
+      // Add current event quantity
+      const itemAtual = await manager.findOne(ChecklistItem, {
+        where: { checklistId, equipmentId },
+      });
+      const totalComAtual = totalSoma + (itemAtual?.quantidadePlanejada ?? 0);
+
+      // Only warn if deficit exists
+      if (totalComAtual > equipment.quantidadeTotal) {
+        const eventoConflito = outrosEventos[0].nome;
+        return `⚠ Conflito de estoque: O evento "${eventoConflito}" também precisa deste item. Total necessário (${totalComAtual}) excede o estoque físico (${equipment.quantidadeTotal}).`;
+      }
+
+      return null;
     } catch (error) {
       console.warn('[SEPARAR] Falha ao verificar conflito de eventos:', error);
       return null;

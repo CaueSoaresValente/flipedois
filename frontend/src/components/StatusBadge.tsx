@@ -74,8 +74,8 @@ const statusConfig: Record<
   },
   quebrado: {
     label: 'Quebrado',
-    bg: 'bg-red-100 dark:bg-red-900/40',
-    text: 'text-red-700 dark:text-red-300',
+    bg: 'bg-amber-100 dark:bg-amber-900/40',
+    text: 'text-amber-700 dark:text-amber-300',
   },
   perdido: {
     label: 'Perdido',
@@ -86,6 +86,11 @@ const statusConfig: Record<
     label: 'Faltando',
     bg: 'bg-orange-100 dark:bg-orange-900/40',
     text: 'text-orange-700 dark:text-orange-300',
+  },
+  aguardando_confirmacao: {
+    label: 'Aguardando Confirmação',
+    bg: 'bg-amber-100 dark:bg-amber-900/40',
+    text: 'text-amber-700 dark:text-amber-300',
   },
 };
 

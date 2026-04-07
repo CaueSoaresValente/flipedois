@@ -120,4 +120,10 @@ export class EventController {
   arquivar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.service.arquivar(id, req.user.sub, req.user.email);
   }
+
+  @Roles('ADMIN')
+  @Patch(':id/reativar')
+  reativar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.reativar(id, req.user.sub, req.user.email);
+  }
 }

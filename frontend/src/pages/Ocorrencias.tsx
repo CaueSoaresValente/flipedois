@@ -165,9 +165,9 @@ export default function Ocorrencias() {
     try {
       await occurrenceApi.confirmar(id);
       load();
-      addToast('success', 'Ocorrência confirmada.');
+      addToast('success', 'Ocorrência confirmada com sucesso.');
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao confirmar.');
+      addToast('error', err.response?.data?.message || 'Erro ao confirmar a ocorrência.');
     }
   }
 
@@ -274,8 +274,8 @@ export default function Ocorrencias() {
           onChange={(e) => setTipoFilter(e.target.value)}
         >
           <option value="">Todos os Tipos</option>
-          <option value="DANO">Dano</option>
-          <option value="PERDA">Perda</option>
+          <option value="DANO">Quebrado</option>
+          <option value="PERDA">Perdido</option>
           <option value="OK">OK</option>
         </select>
         <select
@@ -349,15 +349,15 @@ export default function Ocorrencias() {
                     <span
                       className={`text-xs px-2 py-1 rounded-full font-medium ${
                         oc.tipo === 'DANO'
-                          ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                          ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
                           : oc.tipo === 'PERDA'
-                          ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
+                          ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                           : oc.tipo === 'OK'
                           ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
                           : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
                       }`}
                     >
-                      {oc.tipo}
+                      {oc.tipo === 'DANO' ? 'QUEBRADO' : oc.tipo === 'PERDA' ? 'PERDIDO' : oc.tipo}
                     </span>
                   </td>
                   <td className="px-6 py-3 text-center text-sm font-semibold text-slate-800 dark:text-white">
@@ -448,8 +448,8 @@ export default function Ocorrencias() {
                 value={tipo}
                 onChange={(e) => setTipo(e.target.value)}
               >
-                <option value="DANO">Dano</option>
-                <option value="PERDA">Perda</option>
+                <option value="DANO">Quebrado</option>
+                <option value="PERDA">Perdido</option>
               </select>
             </div>
             <div>

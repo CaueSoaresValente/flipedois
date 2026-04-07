@@ -21,15 +21,15 @@ import { Equipment } from '../equipment/equipment.entity';
  * 1. LIBERAR CHECKLIST:
  *    disponivel -= planejado, emUso += planejado
  *
- * 2. DEVOLUÇÍO OK:
+ * 2. DEVOLUÇÃO OK:
  *    disponivel += qty, emUso -= qty
  *
- * 3. DEVOLUÇÍO DANIFICADA (via confirmarBaixa):
+ * 3. DEVOLUÇÃO DANIFICADA (via confirmarBaixa):
  *    emUso -= qty
  *    danificada += qty
- *    (total NÍO muda — item permanece no total, apenas muda de bucket)
+ *    (total NÃO muda — item permanece no total, apenas muda de bucket)
  *
- * 4. DEVOLUÇÍO PERDIDA (via confirmarBaixa):
+ * 4. DEVOLUÇÃO PERDIDA (via confirmarBaixa):
  *    emUso -= qty
  *    perdida += qty
  *    total -= qty  (item sai do sistema)
@@ -40,7 +40,7 @@ import { Equipment } from '../equipment/equipment.entity';
  *
  * 6. DANO MANUAL (sem devolução):
  *    disponivel -= qty, danificada += qty
- *    (total NÍO muda)
+ *    (total NÃO muda)
  *
  * 7. PERDA MANUAL (sem devolução):
  *    disponivel -= qty, perdida += qty, total -= qty

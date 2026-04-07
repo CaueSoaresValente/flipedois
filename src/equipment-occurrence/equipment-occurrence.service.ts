@@ -237,10 +237,10 @@ export class EquipmentOccurrenceService {
    * Registra uma ocorrência de dano, perda ou ok.
    *
    * Para DANO e PERDA gerados via devolução de checklist (manual = false):
-   *   NÍO altera estoque. Estoque só muda via confirmarBaixa().
+   *   NÃO altera estoque. Estoque só muda via confirmarBaixa().
    *
    * Para DANO e PERDA manuais (manual = true):
-   *   NÍO altera estoque na criação. Estoque só muda via confirmarBaixa().
+   *   NÃO altera estoque na criação. Estoque só muda via confirmarBaixa().
    */
   async registrar(
     eventId: number | null,

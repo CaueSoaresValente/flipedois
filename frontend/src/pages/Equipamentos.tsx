@@ -37,7 +37,8 @@ export default function Equipamentos() {
   const [quantidadeTotal, setQuantidadeTotal] = useState(1);
   const [origem, setOrigem] = useState<'interno' | 'alugado'>('interno');
   const [fornecedor, setFornecedor] = useState('');
-  const [setor, setSetor] = useState<'som' | 'luz' | 'video' | 'estrutura'>('som');
+  const [setor, setSetor] = useState('som');
+  const [setorCustom, setSetorCustom] = useState('');
 
   // Filters
   const [search, setSearch] = useState('');
@@ -75,6 +76,7 @@ export default function Equipamentos() {
     setOrigem('interno');
     setFornecedor('');
     setSetor('som');
+    setSetorCustom('');
     setModalOpen(true);
   }
 
@@ -86,6 +88,7 @@ export default function Equipamentos() {
     setOrigem(eq.origem as 'interno' | 'alugado');
     setFornecedor(eq.fornecedor || '');
     setSetor((eq.setor || 'som') as any);
+    setSetorCustom(!['som', 'luz', 'video', 'estrutura', 'comunicacao', 'outros'].includes(eq.setor || 'som') ? eq.setor : '');
     setModalOpen(true);
   }
 
@@ -99,9 +102,9 @@ export default function Equipamentos() {
           quantidadeTotal,
           origem,
           fornecedor: fornecedor || undefined,
-          setor,
+          setor: setor === 'outros' ? (setorCustom || 'outros') : setor,
         });
-        addToast('success', 'Equipamento atualizado com sucesso');
+        addToast('success', 'Equipamento atualizado com sucesso!');
       } else {
         await equipmentApi.create({
           nome,
@@ -109,9 +112,9 @@ export default function Equipamentos() {
           quantidadeTotal,
           origem,
           fornecedor: fornecedor || undefined,
-          setor,
+          setor: setor === 'outros' ? (setorCustom || 'outros') : setor,
         });
-        addToast('success', 'Equipamento criado com sucesso');
+        addToast('success', 'Equipamento criado com sucesso!');
       }
       setModalOpen(false);
       setNome('');
@@ -121,7 +124,7 @@ export default function Equipamentos() {
       setFornecedor('');
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao salvar equipamento');
+      addToast('error', err.response?.data?.message || 'Erro ao salvar o equipamento.');
     }
   }
 
@@ -130,10 +133,10 @@ export default function Equipamentos() {
     try {
       await equipmentApi.deactivate(confirmDeactivate);
       setConfirmDeactivate(null);
-      addToast('success', 'Equipamento desativado');
+      addToast('success', 'Equipamento desativado com sucesso.');
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao desativar');
+      addToast('error', err.response?.data?.message || 'Erro ao desativar o equipamento.');
     }
   }
 
@@ -294,10 +297,10 @@ export default function Equipamentos() {
                     {eq.quantidadeEmUso}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <span className={eq.quantidadeDanificada > 0 ? 'text-red-500 font-semibold' : 'text-slate-400'}>{eq.quantidadeDanificada}</span>
+                    <span className={eq.quantidadeDanificada > 0 ? 'text-amber-500 font-semibold' : 'text-slate-400'}>{eq.quantidadeDanificada}</span>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <span className={eq.quantidadePerdida > 0 ? 'text-amber-500 font-semibold' : 'text-slate-400'}>{eq.quantidadePerdida}</span>
+                    <span className={eq.quantidadePerdida > 0 ? 'text-red-500 font-semibold' : 'text-slate-400'}>{eq.quantidadePerdida}</span>
                   </td>
                   {isAdmin && (
                     <td className="px-4 py-3">
@@ -420,7 +423,7 @@ export default function Equipamentos() {
               Setor
             </label>
             <div className="flex gap-2 flex-wrap">
-              {(['som', 'luz', 'video', 'estrutura'] as const).map((s) => (
+              {(['som', 'luz', 'video', 'estrutura', 'comunicacao', 'outros'] as const).map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -430,10 +433,21 @@ export default function Equipamentos() {
                       : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
                     }`}
                 >
-                  {s === 'som' ? '🔊 Som' : s === 'luz' ? '💡 Luz' : s === 'video' ? '📹 Vídeo' : '🏗️ Estrutura'}
+                  {s === 'som' ? '🔊 Som' : s === 'luz' ? '💡 Luz' : s === 'video' ? '📹 Vídeo' : s === 'estrutura' ? '🏗️ Estrutura' : s === 'comunicacao' ? '📡 Comunicação' : '📦 Outros'}
                 </button>
               ))}
             </div>
+            {setor === 'outros' && (
+              <div className="mt-2">
+                <input
+                  className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
+                  value={setorCustom}
+                  onChange={(e) => setSetorCustom(e.target.value)}
+                  placeholder="Digite o nome do setor..."
+                  required
+                />
+              </div>
+            )}
           </div>
           {origem === 'alugado' && (
             <div>

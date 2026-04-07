@@ -78,7 +78,7 @@ export class ChecklistItem {
     type: 'varchar',
     default: 'som',
   })
-  setor: 'som' | 'luz' | 'video' | 'estrutura';
+  setor: string;
 
   @VersionColumn()
   version: number;

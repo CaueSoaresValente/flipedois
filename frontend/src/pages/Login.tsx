@@ -19,7 +19,7 @@ export default function Login() {
       await login(email, senha);
       navigate('/dashboard');
     } catch {
-      setError('Email ou senha incorretos');
+      setError('E-mail ou senha incorretos.');
     } finally {
       setLoading(false);
     }

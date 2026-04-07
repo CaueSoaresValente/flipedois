@@ -54,6 +54,12 @@ export default function Logs() {
         DEVOLVER: 'bg-teal-50 text-teal-600 dark:bg-teal-900/20 dark:text-teal-400',
         CANCELAR: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400',
         DESATIVAR: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+        FINALIZAR: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400',
+        CLONAR: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400',
+        ARQUIVAR: 'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400',
+        REATIVAR: 'bg-lime-50 text-lime-600 dark:bg-lime-900/20 dark:text-lime-400',
+        CANCELAR_SEPARACAO: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400',
+        APROVAR_LOTE: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400',
     };
 
     return (
@@ -140,7 +146,7 @@ export default function Logs() {
                                         </td>
                                         <td className="px-4 py-3">
                                             <span
-                                                className={`text-xs font-medium px-2 py-1 rounded-lg ${actionColors[log.action] || 'bg-slate-100 text-slate-600'
+                                                className={`text-xs font-medium px-2 py-1 rounded-lg ${actionColors[log.action] || 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
                                                     }`}
                                             >
                                                 {log.action}

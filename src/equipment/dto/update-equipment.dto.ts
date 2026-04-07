@@ -37,6 +37,6 @@ export class UpdateEquipmentDto {
   fornecedor?: string;
 
   @IsOptional()
-  @IsIn(['som', 'luz', 'video', 'estrutura'])
-  setor?: 'som' | 'luz' | 'video' | 'estrutura';
+  @IsString()
+  setor?: string;
 }

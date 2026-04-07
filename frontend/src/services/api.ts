@@ -124,6 +124,7 @@ export const eventApi = {
     api.patch(`/event/${id}/cancelar`, { motivo }),
   clonar: (id: number) => api.post(`/event/${id}/clonar`),
   arquivar: (id: number) => api.patch(`/event/${id}/arquivar`),
+  reativar: (id: number) => api.patch(`/event/${id}/reativar`),
 };
 
 // =====================

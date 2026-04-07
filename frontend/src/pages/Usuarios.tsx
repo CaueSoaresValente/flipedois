@@ -63,10 +63,10 @@ export default function Usuarios() {
       setEmail('');
       setSenha('');
       setRole('FUNCIONARIO');
-      addToast('success', `Usuário ${nome} criado com sucesso`);
+      addToast('success', `Usuário "${nome}" criado com sucesso!`);
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao criar usuário');
+      addToast('error', err.response?.data?.message || 'Erro ao criar o usuário.');
     }
   }
 
@@ -85,15 +85,15 @@ export default function Usuarios() {
     try {
       if (confirmAction.action === 'desativar') {
         await userApi.desativar(confirmAction.user.id);
-        addToast('success', `Usuário ${confirmAction.user.nome} desativado`);
+        addToast('success', `Usuário "${confirmAction.user.nome}" desativado com sucesso.`);
       } else {
         await userApi.reativar(confirmAction.user.id);
-        addToast('success', `Usuário ${confirmAction.user.nome} reativado`);
+        addToast('success', `Usuário "${confirmAction.user.nome}" reativado com sucesso.`);
       }
       setConfirmAction(null);
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro na operação');
+      addToast('error', err.response?.data?.message || 'Erro ao processar a operação.');
     }
   }
 
