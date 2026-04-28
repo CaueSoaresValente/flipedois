@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Calendar, Plus, Users as UsersIcon, Edit3, CheckCircle, CheckCircle2, XCircle, Ban, Copy, ChevronDown, ChevronUp, PackageCheck, RotateCcw, ClipboardList, X, AlertCircle, Search, Trash2, Archive } from 'lucide-react';
 import { eventApi, checklistApi, checklistItemApi, equipmentApi } from '../services/api';
 
@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import Pagination from '../components/Pagination';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 
 interface EventTeam {
   id: number;
@@ -60,6 +61,7 @@ interface EventItem {
   finalizadoPor?: string;
   checklists: ChecklistData[];
   equipe: EventTeam[];
+  arquivado?: boolean;
 }
 
 interface EquipmentOption {
@@ -74,9 +76,23 @@ interface EquipmentOption {
 function QuantityStepper({ value, onChange, min = 0, max }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
   return (
     <div className="flex items-center gap-2">
-      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center">-</button>
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(min, value - 1))}
+        disabled={value <= min}
+        className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+      >
+        -
+      </button>
       <span className="text-xl font-bold text-slate-800 dark:text-white w-10 text-center">{value}</span>
-      <button type="button" onClick={() => onChange(max !== undefined ? Math.min(max, value + 1) : value + 1)} className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center">+</button>
+      <button
+        type="button"
+        onClick={() => onChange(max !== undefined ? Math.min(max, value + 1) : value + 1)}
+        disabled={max !== undefined && value >= max}
+        className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+      >
+        +
+      </button>
     </div>
   );
 }
@@ -96,6 +112,7 @@ export default function Eventos() {
   const { addToast } = useToast();
   const navigate = useNavigate();
   const { eventId: paramEventId } = useParams();
+  const autoOpenedRef = useRef<string | null>(null);
 
   // Checklist dentro da tela do Evento (Tela Unica)
   const [modalChecklist, setModalChecklist] = useState(false);
@@ -108,6 +125,7 @@ export default function Eventos() {
   const [setor, setSetor] = useState('som');
   const [editQtyItem, setEditQtyItem] = useState<ChecklistItemData | null>(null);
   const [editQtyValue, setEditQtyValue] = useState(1);
+  const [editQtyMax, setEditQtyMax] = useState(999);
   const [modalCreateChecklist, setModalCreateChecklist] = useState(false);
   const [newChecklistNome, setNewChecklistNome] = useState('');
   const [createChecklistForEventId, setCreateChecklistForEventId] = useState<number | null>(null);
@@ -128,6 +146,7 @@ export default function Eventos() {
 
   // Confirm remove item
   const [confirmRemoveItem, setConfirmRemoveItem] = useState<number | null>(null);
+  const [confirmExcluirChecklist, setConfirmExcluirChecklist] = useState<{ id: number; nome: string } | null>(null);
 
   // Rename after clone
   const [renameModal, setRenameModal] = useState<{ id: number; nome: string } | null>(null);
@@ -142,9 +161,10 @@ export default function Eventos() {
 
   // Filters
   const [searchFilter, setSearchFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+
   const [showArchived, setShowArchived] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState<EventItem | null>(null);
+  const [confirmExcluir, setConfirmExcluir] = useState<EventItem | null>(null);
 
   // Create form
   const [nome, setNome] = useState('');
@@ -188,11 +208,18 @@ export default function Eventos() {
     load();
   }, [page, limit, showArchived]);
 
+  useAutoRefresh(() => {
+    load();
+    if (modalChecklist && checklistModal) refreshChecklistModal();
+  }, 10000);
+
   // Deep-link: auto-open event checklist when navigating to /eventos/:eventId
   useEffect(() => {
-    if (paramEventId && events.length > 0) {
+    // Só dispara UMA VEZ por paramEventId para evitar loop infinito
+    if (paramEventId && events.length > 0 && autoOpenedRef.current !== paramEventId) {
       const targetEvent = events.find((ev) => ev.id === Number(paramEventId));
       if (targetEvent && targetEvent.checklists?.length > 0) {
+        autoOpenedRef.current = paramEventId;
         openChecklistModal(targetEvent.checklists[0].id);
       }
     }
@@ -215,9 +242,16 @@ export default function Eventos() {
 
   async function refreshChecklistModal() {
     if (!checklistModal) return;
-    const r = await checklistApi.getOne(checklistModal.id);
-    setChecklistModal(r.data);
-    await load();
+    try {
+      const [clRes, eqRes] = await Promise.all([
+        checklistApi.getOne(checklistModal.id),
+        equipmentApi.getAll({ page: 1, limit: 1000 }),
+      ]);
+      setChecklistModal(clRes.data);
+      setEquipments(eqRes.data.data);
+    } catch (err: any) {
+      console.error('Erro ao atualizar checklist:', err);
+    }
   }
 
   async function handleAddItemToChecklist(e: React.FormEvent) {
@@ -267,14 +301,13 @@ export default function Eventos() {
 
   // === Checklist actions directly inside the event card ===
 
-  async function handleLiberarChecklist() {
-    if (!checklistModal) return;
+  async function handleLiberarEvento(ev: EventItem) {
     try {
-      await checklistApi.liberar(checklistModal.id);
-      addToast('success', 'Checklist liberado com sucesso! Estoque reservado.');
-      await refreshChecklistModal();
+      await eventApi.liberar(ev.id);
+      addToast('success', `Evento "${ev.nome}" liberado! Checklists disponíveis para a equipe.`);
+      await load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao liberar o checklist.');
+      addToast('error', err.response?.data?.message || 'Erro ao liberar o evento.');
     }
   }
 
@@ -357,6 +390,24 @@ export default function Eventos() {
     }
   }
 
+  // Excluir checklist handler (apenas rascunho)
+  async function handleExcluirChecklist() {
+    if (!confirmExcluirChecklist) return;
+    try {
+      const res = await checklistApi.excluir(confirmExcluirChecklist.id);
+      addToast('success', res.data?.message || 'Checklist excluído com sucesso.');
+      setConfirmExcluirChecklist(null);
+      // Se o modal do checklist excluído está aberto, fecha
+      if (checklistModal?.id === confirmExcluirChecklist.id) {
+        setModalChecklist(false);
+        setChecklistModal(null);
+      }
+      await load();
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao excluir o checklist.');
+    }
+  }
+
   // Confirm remove item handler
   async function handleConfirmRemoveItem() {
     if (!confirmRemoveItem) return;
@@ -372,8 +423,8 @@ export default function Eventos() {
 
   // Role-based checklist permissions
   const canSeparate = !isAdmin && ['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
-  // 🔴 Employee can return items with mixed selection (OK/Danificado/Perdido)
-  const canEmployeeReturn = !isAdmin && ['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
+  // 🔴 Employee can return items ONLY when ALL items are separated (em_evento or pendente_devolucao)
+  const canEmployeeReturn = !isAdmin && ['em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
   // 🔴 Planned quantity is IMMUTABLE during return phase (unless it's increased while not complete)
   const canEditPlanned = isAdmin && ['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '') && checklistModal?.status !== 'cancelado';
 
@@ -563,8 +614,7 @@ export default function Eventos() {
   function canFinalizar(ev: EventItem): boolean {
     if (!isAdmin) return false;
     if (ev.status === 'finalizado') return false;
-    // 🔴 Cancelled events CAN be finalized
-    if (ev.status === 'cancelado') return true;
+    if (ev.status === 'cancelado') return false;
     if (!ev.checklists?.length) return false;
     return ev.checklists.every((cl) => ['concluido', 'cancelado'].includes(cl.status));
   }
@@ -578,6 +628,28 @@ export default function Eventos() {
       load();
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao arquivar o evento.');
+    }
+  }
+
+  async function handleDesarquivar(ev: EventItem) {
+    try {
+      await eventApi.desarquivar(ev.id);
+      addToast('success', `Evento "${ev.nome}" restaurado da lixeira.`);
+      await load();
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao restaurar o evento.');
+    }
+  }
+
+  async function handleExcluirPermanente() {
+    if (!confirmExcluir) return;
+    try {
+      await eventApi.excluirPermanente(confirmExcluir.id);
+      addToast('success', `Evento "${confirmExcluir.nome}" excluído permanentemente.`);
+      setConfirmExcluir(null);
+      await load();
+    } catch (err: any) {
+      addToast('error', err.response?.data?.message || 'Erro ao excluir o evento.');
     }
   }
 
@@ -624,16 +696,7 @@ export default function Eventos() {
             onChange={(e) => setSearchFilter(e.target.value)}
           />
         </div>
-        <select
-          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">Todos os Status</option>
-          <option value="ativo">Em andamento</option>
-          <option value="finalizado">Finalizado</option>
-          <option value="cancelado">Cancelado</option>
-        </select>
+
         <button
           onClick={() => setShowArchived(!showArchived)}
           className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${showArchived
@@ -653,7 +716,7 @@ export default function Eventos() {
             const s = searchFilter.toLowerCase();
             if (!ev.nome.toLowerCase().includes(s) && !ev.cliente.toLowerCase().includes(s) && !ev.local.toLowerCase().includes(s)) return false;
           }
-          if (statusFilter && ev.status !== statusFilter) return false;
+
           return true;
         }).map((ev) => (
           <div
@@ -670,7 +733,11 @@ export default function Eventos() {
                   <h3 className="font-semibold text-slate-700 dark:text-white">
                     {ev.nome}
                   </h3>
-                  {ev.status === 'finalizado' ? (
+                  {ev.arquivado ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-medium">
+                      📦 Arquivado
+                    </span>
+                  ) : ev.status === 'finalizado' ? (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-medium">
                       ✓ Finalizado
                     </span>
@@ -687,58 +754,94 @@ export default function Eventos() {
                 <p className="text-sm text-slate-500 dark:text-slate-400">{ev.cliente}</p>
               </div>
               <div className="flex gap-1 flex-shrink-0 ml-2">
-                {isAdmin && ev.status === 'ativo' && (
+                {ev.arquivado ? (
+                  /* === LIXEIRA: apenas Restaurar e Excluir === */
                   <>
+                    {isAdmin && (
+                      <>
+                        <button
+                          onClick={() => handleDesarquivar(ev)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
+                          title="Restaurar evento da lixeira"
+                        >
+                          <RotateCcw size={13} /> Restaurar
+                        </button>
+                        <button
+                          onClick={() => setConfirmExcluir(ev)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                          title="Excluir permanentemente"
+                        >
+                          <Trash2 size={13} /> Excluir
+                        </button>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  /* === EVENTO ATIVO: botões normais === */
+                  <>
+                    {isAdmin && ev.status === 'ativo' && (
+                      <>
+                        <button
+                          onClick={() => openEdit(ev)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                          title="Editar evento"
+                        >
+                          <Edit3 size={13} /> Editar
+                        </button>
+                        <button
+                          onClick={() => { setConfirmCancelar(ev); setMotivoCancelamento(''); }}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                          title="Cancelar evento"
+                        >
+                          <Ban size={13} /> Cancelar
+                        </button>
+                      </>
+                    )}
+                    {isAdmin && ev.status === 'cancelado' && (
+                      <button
+                        onClick={() => handleReativarEvento(ev)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
+                        title="Reativar evento (volta para rascunho)"
+                      >
+                        <RotateCcw size={13} /> Reativar Evento
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleClonarEvento(ev)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors"
+                        title="Clonar evento (inclui checklists e equipe)"
+                      >
+                        <Copy size={13} /> Clonar
+                      </button>
+                    )}
+                    {isAdmin && ev.status === 'ativo' && !ev.arquivado && ev.checklists?.some(cl => cl.status === 'rascunho') && (
+                      <button
+                        onClick={() => handleLiberarEvento(ev)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors"
+                        title="Liberar evento para a equipe (reserva estoque de todos os checklists)"
+                      >
+                        <CheckCircle2 size={13} /> Liberar Evento
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        onClick={() => setConfirmArchive(ev)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                        title="Arquivar evento (mover para lixeira)"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                     <button
-                      onClick={() => openEdit(ev)}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-                      title="Editar evento"
+                      onClick={() => openTeam(ev)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                      title="Equipe"
                     >
-                      <Edit3 size={13} /> Editar
-                    </button>
-                    <button
-                      onClick={() => { setConfirmCancelar(ev); setMotivoCancelamento(''); }}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
-                      title="Cancelar evento"
-                    >
-                      <Ban size={13} /> Cancelar
+                      <UsersIcon size={16} />
                     </button>
                   </>
                 )}
-                {isAdmin && ev.status === 'cancelado' && (
-                  <button
-                    onClick={() => handleReativarEvento(ev)}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
-                    title="Reativar evento (volta para rascunho)"
-                  >
-                    <RotateCcw size={13} /> Reativar Evento
-                  </button>
-                )}
-                {isAdmin && (
-                  <button
-                    onClick={() => handleClonarEvento(ev)}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors"
-                    title="Clonar evento (inclui checklists e equipe)"
-                  >
-                    <Copy size={13} /> Clonar
-                  </button>
-                )}
-                {isAdmin && (
-                  <button
-                    onClick={() => setConfirmArchive(ev)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                    title="Arquivar evento (mover para lixeira)"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
-                <button
-                  onClick={() => openTeam(ev)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
-                  title="Equipe"
-                >
-                  <UsersIcon size={16} />
-                </button>
               </div>
             </div>
 
@@ -748,7 +851,7 @@ export default function Eventos() {
                 {new Date(ev.dataInicio).toLocaleDateString('pt-BR')} -{' '}
                 {new Date(ev.dataFim).toLocaleDateString('pt-BR')}
               </p>
-              {ev.checklists?.length > 0 && (
+              {!ev.arquivado && ev.checklists?.length > 0 && (
                 <div className="mt-2 space-y-1">
                   {ev.checklists.map((cl) => (
                     <div key={cl.id} className="flex items-center justify-between gap-2">
@@ -774,14 +877,23 @@ export default function Eventos() {
                         >
                           Abrir
                         </button>
-
+                        {isAdmin && cl.status === 'rascunho' && (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmExcluirChecklist({ id: cl.id, nome: cl.nome })}
+                            className="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                            title="Excluir checklist"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               )}
               {/* Novo Checklist button on the event card */}
-              {isAdmin && ev.status === 'ativo' && (
+              {!ev.arquivado && isAdmin && ev.status === 'ativo' && (
                 <button
                   type="button"
                   onClick={() => { setCreateChecklistForEventId(ev.id); setNewChecklistNome(`Checklist ${ev.nome}`); setModalCreateChecklist(true); }}
@@ -806,7 +918,7 @@ export default function Eventos() {
             )}
 
             {/* Finalization button */}
-            {canFinalizar(ev) && (
+            {!ev.arquivado && canFinalizar(ev) && (
               <button
                 onClick={() => setConfirmFinalizar(ev)}
                 className="mt-3 w-full flex items-center justify-center gap-2 text-xs bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-2 rounded-lg font-medium transition-colors"
@@ -814,7 +926,7 @@ export default function Eventos() {
                 <CheckCircle size={14} /> Finalizar Evento
               </button>
             )}
-            {isAdmin && ev.status !== 'finalizado' && ev.checklists?.length > 0 && !canFinalizar(ev) && (
+            {!ev.arquivado && isAdmin && ev.status !== 'finalizado' && ev.checklists?.length > 0 && !canFinalizar(ev) && (
               <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
                 <XCircle size={14} />
                 Aguardando conclusão dos checklists
@@ -1130,15 +1242,7 @@ export default function Eventos() {
               <div className="flex items-center gap-2 flex-wrap">
                 <StatusBadge status={checklistModal.status} />
 
-                {isAdmin && checklistModal.status === 'rascunho' && (checklistModal.items?.length ?? 0) > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleLiberarChecklist}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-green-500 hover:bg-green-600 text-white transition-colors font-medium"
-                  >
-                    ✓ Liberar Checklist
-                  </button>
-                )}
+                {/* Botão de Liberar individual removido - agora é feito via 'Liberar Evento' no card */}
                 {/* Botão de Cancelar Checklist individual removido conforme pedido (cancelamento centralizado no Evento) */}
 
                 {isAdmin && checklistModal.status === 'cancelado' && (
@@ -1454,7 +1558,22 @@ export default function Eventos() {
                             )}
                             {canEditPlanned && (
                               <button
-                                onClick={() => { setEditQtyItem(item); setEditQtyValue(item.quantidadePlanejada); }}
+                                onClick={async () => {
+                                  setEditQtyItem(item);
+                                  setEditQtyValue(item.quantidadePlanejada);
+                                  try {
+                                    const res = await equipmentApi.search(item.nomeSnapshot);
+                                    const eq = res.data?.find((e: any) => e.id === item.equipmentId);
+                                    if (eq) {
+                                      // Max = disponivel + o que já está reservado para este item
+                                      const isRascunho = checklistModal?.status === 'rascunho';
+                                      const jaReservado = isRascunho ? 0 : item.quantidadePlanejada;
+                                      setEditQtyMax(eq.quantidadeDisponivel + jaReservado);
+                                    } else {
+                                      setEditQtyMax(999);
+                                    }
+                                  } catch { setEditQtyMax(999); }
+                                }}
                                 className="text-xs font-medium px-2 py-1 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors"
                               >
                                 Editar qtd
@@ -1524,15 +1643,16 @@ export default function Eventos() {
         {editQtyItem && (
           <div className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou além), o sistema ajustará o estoque automaticamente.
+              Ajuste a quantidade planejada. Estoque disponível: <span className="font-bold text-indigo-500">{editQtyMax}</span> unidade(s).
             </p>
             <div className="flex justify-center py-2">
-              <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} />
+              <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} max={editQtyMax} />
             </div>
             <button
               type="button"
               onClick={handleUpdatePlannedQty}
-              className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
+              disabled={editQtyValue > editQtyMax}
+              className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
             >
               Salvar quantidade
             </button>
@@ -1720,6 +1840,27 @@ export default function Eventos() {
         title="Arquivar Evento"
         message={`Tem certeza que deseja arquivar o evento "${confirmArchive?.nome}"? Ele será movido para a lixeira e não aparecerá mais na lista de eventos ativos.`}
         confirmLabel="Arquivar"
+        type="danger"
+      />
+
+      {/* Confirm Permanent Delete Modal */}
+      <ConfirmModal
+        open={confirmExcluir !== null}
+        onClose={() => setConfirmExcluir(null)}
+        onConfirm={handleExcluirPermanente}
+        title="Excluir Evento Permanentemente"
+        message={`ATENÇÃO: Esta ação é IRREVERSÍVEL! Tem certeza que deseja excluir permanentemente o evento "${confirmExcluir?.nome}"? Todos os dados serão perdidos: checklists, itens, equipe e histórico.`}
+        confirmLabel="Excluir Permanentemente"
+        type="danger"
+      />
+
+      <ConfirmModal
+        open={confirmExcluirChecklist !== null}
+        onClose={() => setConfirmExcluirChecklist(null)}
+        onConfirm={handleExcluirChecklist}
+        title="Excluir Checklist"
+        message={`Deseja excluir o checklist "${confirmExcluirChecklist?.nome}"? Esta ação é irreversível.`}
+        confirmLabel="Excluir"
         type="danger"
       />
     </div>

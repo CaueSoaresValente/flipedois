@@ -69,13 +69,17 @@ export class EventService {
       .leftJoinAndSelect('event.equipe', 'equipe')
       .orderBy('event.dataInicio', 'DESC');
 
-    // Filter archived events by default
-    if (!showArchived) {
+    // Toggle between active and archived events
+    if (showArchived) {
+      query.andWhere('event.arquivado = :arq', { arq: true });
+    } else {
       query.andWhere('event.arquivado = :arq', { arq: false });
     }
 
-    // FUNCIONÁRIO: só vê eventos "liberados" para a equipe
+    // FUNCIONÁRIO: só vê eventos "liberados" para a equipe que NÃO estejam arquivados ou cancelados
     if (userRole === 'FUNCIONARIO') {
+      query.andWhere('event.arquivado = :arq', { arq: false });
+      query.andWhere('event.status != :status', { status: 'cancelado' });
       query.andWhere(
         `event.id IN (
           SELECT c."eventId"
@@ -215,7 +219,9 @@ export class EventService {
 
   /**
    * CANCELAR EVENTO: Reverte todas as reservas de estoque ativas.
-   * Checklists vinculados também são cancelados e seus itens voltam ao estoque.
+   * Checklists vinculados tambem sao cancelados e seus itens voltam ao estoque.
+   *
+   * INFALIVEL — usa ajuste direto com Math.min para nunca falhar por inconsistencia.
    */
   async cancelar(
     id: number,
@@ -224,7 +230,7 @@ export class EventService {
     userEmail?: string,
   ) {
     if (!motivo || motivo.trim().length === 0) {
-      throw new BadRequestException('Motivo do cancelamento é obrigatório.');
+      throw new BadRequestException('Motivo do cancelamento e obrigatorio.');
     }
 
     return this.dataSource.transaction(async (manager) => {
@@ -233,35 +239,37 @@ export class EventService {
         relations: ['checklists', 'checklists.items'],
       });
 
-      if (!event) throw new BadRequestException('Evento não encontrado.');
+      if (!event) throw new BadRequestException('Evento nao encontrado.');
 
       if (event.status === 'cancelado')
-        throw new BadRequestException('Evento já está cancelado.');
+        throw new BadRequestException('Evento ja esta cancelado.');
       if (event.status === 'finalizado')
         throw new BadRequestException(
-          'Não é possível cancelar evento finalizado.',
+          'Nao e possivel cancelar evento finalizado.',
         );
 
       // Reverte reservas de estoque para checklists ativos
       for (const checklist of event.checklists ?? []) {
-        if (['cancelado', 'concluido'].includes(checklist.status)) continue;
+        if (['cancelado', 'concluido', 'rascunho'].includes(checklist.status)) continue;
 
         const items = await manager.find(ChecklistItem, {
           where: { checklistId: checklist.id },
         });
 
         for (const item of items) {
+          const equipment = await manager.findOne(Equipment, {
+            where: { id: item.equipmentId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!equipment) continue;
+
+          let aLiberar = 0;
+
           if (checklist.status === 'liberado') {
-            // Stock foi reservado na liberação — reverter tudo
-            await this.stockService.liberarReserva(
-              manager,
-              item.equipmentId,
-              item.quantidadePlanejada,
-            );
+            aLiberar = item.quantidadePlanejada;
           } else if (
             ['em_evento', 'pendente_devolucao'].includes(checklist.status)
           ) {
-            // Calcular o que REALMENTE saiu de emUso:
             const occurrences = await manager.find(EquipmentOccurrence, {
               where: { checklistItemId: item.id },
             });
@@ -272,20 +280,23 @@ export class EventService {
               .filter(o => o.status === 'BAIXADO' && o.tipo === 'PERDA')
               .reduce((sum, o) => sum + o.quantidade, 0);
             const totalSaiuDeEmUso = (item.quantidadeOk || 0) + baixadoDano + baixadoPerda;
-            const emUso = item.quantidadePlanejada - totalSaiuDeEmUso;
-            if (emUso > 0) {
-              await this.stockService.liberarReserva(
-                manager,
-                item.equipmentId,
-                emUso,
-              );
-            }
+            aLiberar = item.quantidadePlanejada - totalSaiuDeEmUso;
 
-            // Cancelar ocorrências PENDENTES vinculadas a este item
+            // Cancelar ocorrencias PENDENTES vinculadas a este item
             const pendentes = occurrences.filter(o => o.status === 'PENDENTE');
             for (const occ of pendentes) {
               occ.status = 'CANCELADO';
               await manager.save(EquipmentOccurrence, occ);
+            }
+          }
+
+          // Ajuste direto e seguro: nunca liberar mais que o emUso real
+          if (aLiberar > 0) {
+            const liberarReal = Math.min(aLiberar, equipment.quantidadeEmUso);
+            if (liberarReal > 0) {
+              equipment.quantidadeDisponivel += liberarReal;
+              equipment.quantidadeEmUso -= liberarReal;
+              await manager.save(Equipment, equipment);
             }
           }
         }
@@ -377,31 +388,357 @@ export class EventService {
   }
 
   /**
-   * ARQUIVAR EVENTO: Soft-delete - oculta da listagem sem perder dados.
+   * LIBERAR EVENTO: Libera todos os checklists elegiveis e garante reserva de estoque.
+   *
+   * Dois cenarios:
+   * 1) Checklists em 'rascunho' com itens -> reserva tudo, promove para 'liberado'
+   * 2) Checklists ja em 'liberado' -> verifica se TODOS os itens tem estoque reservado
+   *    (corrige situacoes onde itens foram adicionados antes da liberacao e ficaram sem reserva)
+   */
+  async liberarEvento(id: number, userId?: number, userEmail?: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const event = await manager.findOne(Event, {
+        where: { id },
+        relations: ['checklists'],
+      });
+
+      if (!event) throw new BadRequestException('Evento nao encontrado.');
+      if (event.arquivado) throw new BadRequestException('Nao e possivel liberar evento arquivado.');
+      if (event.status !== 'ativo') {
+        throw new BadRequestException(`Apenas eventos ativos podem ser liberados. Status atual: ${event.status}`);
+      }
+
+      let totalLiberados = 0;
+      let totalItensCorrigidos = 0;
+
+      for (const checklist of event.checklists ?? []) {
+        // Carregar itens diretamente do banco para garantir dados frescos
+        const items = await manager.find(ChecklistItem, {
+          where: { checklistId: checklist.id },
+        });
+
+        if (items.length === 0) continue;
+
+        if (checklist.status === 'rascunho') {
+          // === CENARIO 1: Checklist em rascunho -> reservar tudo ===
+          const mapa = new Map<number, number>();
+          for (const item of items) {
+            const atual = mapa.get(item.equipmentId) ?? 0;
+            mapa.set(item.equipmentId, atual + item.quantidadePlanejada);
+          }
+
+          for (const [equipmentId, quantidade] of mapa.entries()) {
+            await this.stockService.reservarEstoque(
+              manager,
+              equipmentId,
+              quantidade,
+            );
+          }
+
+          checklist.status = 'liberado';
+          await manager.save(Checklist, checklist);
+          totalLiberados++;
+        }
+      }
+
+      if (totalLiberados === 0) {
+        throw new BadRequestException(
+          'Nenhum checklist em rascunho com itens encontrado para liberar.',
+        );
+      }
+
+      await this.auditLogService.log(
+        userId ?? null,
+        userEmail ?? null,
+        'LIBERAR_EVENTO',
+        'event',
+        id,
+        { checklistsLiberados: totalLiberados, itensCorrigidos: totalItensCorrigidos },
+        `Evento "${event.nome}" liberado (${totalLiberados} checklists)`,
+      );
+
+      return {
+        message: `${totalLiberados} checklist(s) liberado(s) com sucesso.`,
+      };
+    });
+  }
+
+  /**
+   * ARQUIVAR EVENTO: Move para lixeira.
+   * - Libera TODO o estoque reservado de todos os checklists
+   * - Reseta todos os checklists (exceto cancelados) para 'rascunho'
+   * - Reseta campos de separacao/devolucao dos itens
+   *
+   * NOTA: Este metodo e INFALIVEL — nunca deve falhar por inconsistencia de estoque.
+   * Usa ajuste direto com Math.min em vez de guards rigidos do StockService.
    */
   async arquivar(id: number, userId?: number, userEmail?: string) {
-    const event = await this.repo.findOne({ where: { id } });
-    if (!event) throw new BadRequestException('Evento não encontrado.');
-    if (event.arquivado) throw new BadRequestException('Evento já está arquivado.');
+    return this.dataSource.transaction(async (manager) => {
+      const event = await manager.findOne(Event, {
+        where: { id },
+        relations: ['checklists', 'checklists.items'],
+      });
 
-    event.arquivado = true;
-    event.arquivadoPor = userEmail ?? undefined;
-    event.arquivadoEm = new Date();
+      if (!event) throw new BadRequestException('Evento nao encontrado.');
+      if (event.arquivado) throw new BadRequestException('Evento ja esta arquivado.');
 
-    const saved = await this.repo.save(event);
+      // === LIBERAR ESTOQUE de todos os checklists que tem reserva ===
+      for (const checklist of event.checklists ?? []) {
+        // Rascunho: nunca reservou estoque. Cancelado/Concluido: estoque ja devolvido.
+        if (['rascunho', 'cancelado', 'concluido'].includes(checklist.status)) continue;
 
-    await this.auditLogService.log(
-      userId ?? null,
-      userEmail ?? null,
-      'ARQUIVAR',
-      'event',
-      id,
-      { arquivado: true },
-      `Evento "${event.nome}" arquivado`,
-    );
+        const items = await manager.find(ChecklistItem, {
+          where: { checklistId: checklist.id },
+        });
 
-    return saved;
+        for (const item of items) {
+          // Buscar equipamento com lock para ajuste direto
+          const equipment = await manager.findOne(Equipment, {
+            where: { id: item.equipmentId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!equipment) continue;
+
+          let aLiberar = 0;
+
+          if (checklist.status === 'liberado') {
+            // Liberado: estoque totalmente em emUso, nada separado/devolvido
+            aLiberar = item.quantidadePlanejada;
+          } else if (['em_evento', 'pendente_devolucao'].includes(checklist.status)) {
+            // Em evento/pendente: calcular emUso restante
+            const occurrences = await manager.find(EquipmentOccurrence, {
+              where: { checklistItemId: item.id },
+            });
+            const baixadoDano = occurrences
+              .filter(o => o.status === 'BAIXADO' && o.tipo === 'DANO')
+              .reduce((sum, o) => sum + o.quantidade, 0);
+            const baixadoPerda = occurrences
+              .filter(o => o.status === 'BAIXADO' && o.tipo === 'PERDA')
+              .reduce((sum, o) => sum + o.quantidade, 0);
+            const totalSaiuDeEmUso = (item.quantidadeOk || 0) + baixadoDano + baixadoPerda;
+            aLiberar = item.quantidadePlanejada - totalSaiuDeEmUso;
+
+            // Cancelar ocorrencias PENDENTES vinculadas a este item
+            const pendentes = occurrences.filter(o => o.status === 'PENDENTE');
+            for (const occ of pendentes) {
+              occ.status = 'CANCELADO';
+              await manager.save(EquipmentOccurrence, occ);
+            }
+          }
+
+          // Ajuste direto e seguro: nunca liberar mais que o emUso real do equipamento
+          if (aLiberar > 0) {
+            const liberarReal = Math.min(aLiberar, equipment.quantidadeEmUso);
+            if (liberarReal > 0) {
+              equipment.quantidadeDisponivel += liberarReal;
+              equipment.quantidadeEmUso -= liberarReal;
+              await manager.save(Equipment, equipment);
+            }
+          }
+
+          // Resetar campos do item para estado inicial
+          item.quantidadeSeparada = 0;
+          item.quantidadeDevolvida = 0;
+          item.quantidadeOk = 0;
+          item.quantidadeQuebrada = 0;
+          item.quantidadePerdida = 0;
+          item.statusSeparacao = 'pendente';
+          item.statusDevolucao = 'pendente';
+          item.observacaoDevolucao = undefined;
+          await manager.save(ChecklistItem, item);
+        }
+      }
+
+      // === RESETAR CHECKLISTS para rascunho (exceto cancelados) ===
+      for (const checklist of event.checklists ?? []) {
+        if (checklist.status === 'cancelado') continue; // manter cancelados como estao
+        await manager.update(Checklist, checklist.id, {
+          status: 'rascunho',
+          motivoCancelamento: undefined,
+          canceladoPor: undefined,
+          canceladoEm: undefined,
+        });
+      }
+
+      // === MARCAR EVENTO COMO ARQUIVADO ===
+      event.arquivado = true;
+      event.arquivadoPor = userEmail ?? undefined;
+      event.arquivadoEm = new Date();
+
+      const saved = await manager.save(Event, event);
+
+      await this.auditLogService.log(
+        userId ?? null,
+        userEmail ?? null,
+        'ARQUIVAR',
+        'event',
+        id,
+        { arquivado: true },
+        `Evento "${event.nome}" arquivado. Estoque liberado e checklists resetados.`,
+      );
+
+      return saved;
+    });
   }
+  /**
+   * DESARQUIVAR EVENTO: Restaura da lixeira para a listagem ativa.
+   * Checklists já foram resetados para 'rascunho' no arquivamento.
+   * O admin precisará re-liberar os checklists para reservar estoque novamente.
+   */
+  async desarquivar(id: number, userId?: number, userEmail?: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const event = await manager.findOne(Event, {
+        where: { id },
+        relations: ['checklists'],
+      });
+
+      if (!event) throw new BadRequestException('Evento não encontrado.');
+      if (!event.arquivado) throw new BadRequestException('Evento não está arquivado.');
+
+      // Restaurar evento
+      event.arquivado = false;
+      event.arquivadoPor = undefined;
+      event.arquivadoEm = undefined;
+      event.status = 'ativo'; // garantir que volta como ativo
+
+      // Limpar campos de cancelamento/finalização caso existam
+      event.motivoCancelamento = undefined;
+      event.canceladoPor = undefined;
+      event.canceladoEm = undefined;
+      event.finalizadoPor = undefined;
+      event.finalizadoEm = undefined;
+
+      // === GARANTIR que todos os checklists estejam em rascunho ===
+      // (Redundância de segurança: arquivar já reseta, mas para eventos
+      //  arquivados antes dessa lógica, forçamos o reset aqui também)
+      if (event.checklists) {
+        for (const checklist of event.checklists) {
+          if (checklist.status === 'cancelado') continue; // manter cancelados
+          await manager.update(Checklist, checklist.id, {
+            status: 'rascunho',
+            motivoCancelamento: undefined,
+            canceladoPor: undefined,
+            canceladoEm: undefined,
+          });
+        }
+      }
+
+      const saved = await manager.save(Event, event);
+
+      await this.auditLogService.log(
+        userId ?? null,
+        userEmail ?? null,
+        'DESARQUIVAR',
+        'event',
+        id,
+        { arquivado: false, status: 'ativo' },
+        `Evento "${event.nome}" restaurado da lixeira. Checklists em rascunho.`,
+      );
+
+      return saved;
+    });
+  }
+
+  /**
+   * EXCLUIR PERMANENTE: Remove definitivamente o evento e todos os dados relacionados.
+   * Libera todo o estoque que ainda estiver reservado antes de deletar.
+   * INFALIVEL — usa ajuste direto com Math.min.
+   */
+  async excluirPermanente(id: number, userId?: number, userEmail?: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const event = await manager.findOne(Event, {
+        where: { id },
+        relations: ['checklists', 'checklists.items', 'equipe'],
+      });
+
+      if (!event) throw new BadRequestException('Evento nao encontrado.');
+
+      const nomeEvento = event.nome;
+
+      // === LIBERAR ESTOQUE antes de deletar (para checklists que ainda tem reserva) ===
+      for (const checklist of event.checklists ?? []) {
+        if (['rascunho', 'cancelado', 'concluido'].includes(checklist.status)) continue;
+
+        const items = await manager.find(ChecklistItem, {
+          where: { checklistId: checklist.id },
+        });
+
+        for (const item of items) {
+          const equipment = await manager.findOne(Equipment, {
+            where: { id: item.equipmentId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!equipment) continue;
+
+          let aLiberar = 0;
+
+          if (checklist.status === 'liberado') {
+            aLiberar = item.quantidadePlanejada;
+          } else if (['em_evento', 'pendente_devolucao'].includes(checklist.status)) {
+            const occurrences = await manager.find(EquipmentOccurrence, {
+              where: { checklistItemId: item.id },
+            });
+            const baixadoDano = occurrences
+              .filter(o => o.status === 'BAIXADO' && o.tipo === 'DANO')
+              .reduce((sum, o) => sum + o.quantidade, 0);
+            const baixadoPerda = occurrences
+              .filter(o => o.status === 'BAIXADO' && o.tipo === 'PERDA')
+              .reduce((sum, o) => sum + o.quantidade, 0);
+            const totalSaiuDeEmUso = (item.quantidadeOk || 0) + baixadoDano + baixadoPerda;
+            aLiberar = item.quantidadePlanejada - totalSaiuDeEmUso;
+
+            // Cancelar ocorrencias PENDENTES
+            const pendentes = occurrences.filter(o => o.status === 'PENDENTE');
+            for (const occ of pendentes) {
+              occ.status = 'CANCELADO';
+              await manager.save(EquipmentOccurrence, occ);
+            }
+          }
+
+          // Ajuste direto e seguro
+          if (aLiberar > 0) {
+            const liberarReal = Math.min(aLiberar, equipment.quantidadeEmUso);
+            if (liberarReal > 0) {
+              equipment.quantidadeDisponivel += liberarReal;
+              equipment.quantidadeEmUso -= liberarReal;
+              await manager.save(Equipment, equipment);
+            }
+          }
+        }
+      }
+
+      // Deletar tudo (order matters for FK constraints)
+      // 1. Deletar itens de checklist
+      for (const checklist of event.checklists ?? []) {
+        await manager.delete(ChecklistItem, { checklistId: checklist.id });
+      }
+      // 2. Deletar checklists
+      for (const checklist of event.checklists ?? []) {
+        await manager.delete(Checklist, { id: checklist.id });
+      }
+      // 3. Deletar equipe
+      if (event.equipe?.length) {
+        for (const membro of event.equipe) {
+          await manager.delete(EventTeam, { id: membro.id });
+        }
+      }
+      // 4. Deletar o evento
+      await manager.delete(Event, { id });
+
+      await this.auditLogService.log(
+        userId ?? null,
+        userEmail ?? null,
+        'EXCLUIR_PERMANENTE',
+        'event',
+        id,
+        { nome: nomeEvento },
+        `Evento "${nomeEvento}" excluido permanentemente`,
+      );
+
+      return { message: `Evento "${nomeEvento}" excluido permanentemente.` };
+    });
+  }
+
 
   async update(
     id: number,

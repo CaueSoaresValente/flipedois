@@ -84,6 +84,12 @@ export class EventController {
   }
 
   @Roles('ADMIN')
+  @Patch(':id/liberar')
+  liberarEvento(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.liberarEvento(id, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
@@ -125,5 +131,17 @@ export class EventController {
   @Patch(':id/reativar')
   reativar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.service.reativar(id, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Patch(':id/desarquivar')
+  desarquivar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.desarquivar(id, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Delete(':id')
+  excluirPermanente(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.excluirPermanente(id, req.user.sub, req.user.email);
   }
 }

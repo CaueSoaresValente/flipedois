@@ -12,6 +12,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EquipmentOccurrence } from '../equipment-occurrence/equipment-occurrence.entity';
 import { EquipmentOccurrenceService } from '../equipment-occurrence/equipment-occurrence.service';
 import { StockService } from '../stock/stock.service';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class ChecklistItemService {
@@ -37,6 +38,7 @@ export class ChecklistItemService {
     private readonly auditLogService: AuditLogService,
     private readonly stockService: StockService,
     private readonly occurrenceService: EquipmentOccurrenceService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   // ==============================
@@ -86,14 +88,11 @@ export class ChecklistItemService {
         );
       }
 
-      // Para rascunho: avisa se estoque insuficiente mas não bloqueia
-      // Para ativo: verifica e reserva
-      if (checklist.status !== 'rascunho') {
-        if (data.quantidadePlanejada > equipment.quantidadeDisponivel) {
-          throw new BadRequestException(
-            `Estoque insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}, Solicitado: ${data.quantidadePlanejada}.`,
-          );
-        }
+      // Validar estoque disponível em QUALQUER status
+      if (data.quantidadePlanejada > equipment.quantidadeDisponivel) {
+        throw new BadRequestException(
+          `Estoque insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}, Solicitado: ${data.quantidadePlanejada}.`,
+        );
       }
 
       const existing = await manager.findOne(ChecklistItem, {
@@ -125,6 +124,18 @@ export class ChecklistItemService {
         await this.stockService.reservarEstoque(
           manager,
           equipment.id,
+          data.quantidadePlanejada,
+        );
+      }
+
+      // Notificar funcionários se checklist estiver em status ativo
+      if (checklist.status !== 'rascunho') {
+        await this.notificationService.notificarFuncionarios(
+          'EQUIPAMENTO_ADICIONADO',
+          data.checklistId,
+          checklist.nome,
+          equipment.nome,
+          undefined,
           data.quantidadePlanejada,
         );
       }
@@ -256,13 +267,7 @@ export class ChecklistItemService {
           where: { id: item.checklistId },
         });
 
-        const alerta = await this.verificarConflitoEventosTx(
-          manager,
-          item.equipmentId,
-          item.checklistId,
-        );
-
-        return { aviso, alerta, item, checklist: checklistAtualizado };
+        return { aviso, alerta: null, item, checklist: checklistAtualizado };
       } catch (error) {
         if (error instanceof BadRequestException) throw error;
         console.error('[SEPARAR] Erro inesperado:', error);
@@ -462,6 +467,9 @@ export class ChecklistItemService {
 
     // Não recalcular em status terminais
     if (['concluido', 'cancelado'].includes(checklist.status)) return;
+
+    // RASCUNHO: NUNCA mudar automaticamente. Só o "Liberar Evento" promove para liberado.
+    if (checklist.status === 'rascunho') return;
     
     // Busca os itens diretamente do banco para garantir dados frescos
     const items = await manager.find(ChecklistItem, {
@@ -489,8 +497,6 @@ export class ChecklistItemService {
       (i: ChecklistItem) => i.statusDevolucao === 'aguardando_confirmacao',
     );
 
-    const statusAnterior = checklist.status;
-
     if (todosFinalizados) {
       checklist.status = 'concluido';
     } else if (algumAguardando || algumDevolvido) {
@@ -498,15 +504,9 @@ export class ChecklistItemService {
     } else if (todosSeparados) {
       checklist.status = 'em_evento';
     } else {
-      // Nem tudo separado:
-      // Se já estava em em_evento ou além, NÃO rebaixar para liberado.
-      // Felipe edita à vontade e o status se mantém.
-      // Só atribui liberado se vinha de liberado ou rascunho.
-      if (['rascunho', 'liberado'].includes(statusAnterior)) {
-        checklist.status = 'liberado';
-      }
-      // Se era em_evento ou pendente_devolucao, mantém o status anterior
-      // (os itens novos/alterados serão separados pelo funcionário)
+      // Nem tudo separado ainda: volta para liberado para que o funcionário
+      // saiba que há itens novos ou alterados precisando de separação.
+      checklist.status = 'liberado';
     }
 
     await manager.save(Checklist, checklist);
@@ -582,6 +582,12 @@ export class ChecklistItemService {
       if (status !== 'rascunho') {
         // Checklist com estoque reservado: ajustar conforme delta
         if (delta > 0) {
+          // Validar se há estoque disponível suficiente
+          if (delta > equipment.quantidadeDisponivel) {
+            throw new BadRequestException(
+              `Estoque insuficiente. Disponível: ${equipment.quantidadeDisponivel}, solicitado: ${delta} unidades a mais.`,
+            );
+          }
           await this.stockService.reservarEstoque(
             manager,
             item.equipmentId,
@@ -595,10 +601,10 @@ export class ChecklistItemService {
           );
         }
       } else {
-        // Rascunho: apenas valida disponibilidade
+        // Rascunho: sem reserva de estoque, mas validar disponibilidade
         if (quantidade > equipment.quantidadeDisponivel) {
           throw new BadRequestException(
-            `Estoque insuficiente para "${equipment.nome}". Disponível: ${equipment.quantidadeDisponivel}.`,
+            `Estoque insuficiente. Disponível: ${equipment.quantidadeDisponivel}, solicitado: ${quantidade}.`,
           );
         }
       }
@@ -617,6 +623,21 @@ export class ChecklistItemService {
 
       // Recalcular status do checklist (pode voltar de em_evento → liberado)
       await this.atualizarStatusChecklistTx(manager, item.checklistId);
+
+      // Notificar funcionários sobre a mudança de quantidade (somente em status ativo)
+      if (status !== 'rascunho' && delta !== 0) {
+        const checklist = await manager.findOne(Checklist, {
+          where: { id: item.checklistId },
+        });
+        await this.notificationService.notificarFuncionarios(
+          delta > 0 ? 'QUANTIDADE_AUMENTADA' : 'QUANTIDADE_DIMINUIDA',
+          item.checklistId,
+          checklist?.nome ?? `Checklist #${item.checklistId}`,
+          item.nomeSnapshot,
+          anterior,
+          quantidade,
+        );
+      }
 
       await this.auditLogService.log(
         userId ?? null,
@@ -673,6 +694,19 @@ export class ChecklistItemService {
 
       // Recalcular status do checklist após remoção
       await this.atualizarStatusChecklistTx(manager, item.checklistId);
+
+      // Notificar funcionários sobre remoção (somente em status ativo)
+      if (status !== 'rascunho') {
+        const checklist = await manager.findOne(Checklist, {
+          where: { id: item.checklistId },
+        });
+        await this.notificationService.notificarFuncionarios(
+          'EQUIPAMENTO_REMOVIDO',
+          item.checklistId,
+          checklist?.nome ?? `Checklist #${item.checklistId}`,
+          item.nomeSnapshot,
+        );
+      }
 
       await this.auditLogService.log(
         userId ?? null,

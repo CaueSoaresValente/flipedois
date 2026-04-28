@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import Pagination from '../components/Pagination';
 import EquipmentSearch from '../components/EquipmentSearch';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 
 interface Occurrence {
   id: number;
@@ -81,6 +82,8 @@ export default function Ocorrencias() {
   useEffect(() => {
     load();
   }, [page, limit]);
+
+  useAutoRefresh(load, 10000);
 
   const [validation, setValidation] = useState<{ valido: boolean; quantidadeOk: number; mensagem?: string } | null>(null);
   const [isValidating, setIsValidating] = useState(false);

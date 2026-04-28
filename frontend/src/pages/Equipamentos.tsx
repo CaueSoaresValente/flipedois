@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Package, Plus, Edit3, XCircle, Search } from 'lucide-react';
+import { Package, Plus, Edit3, Search, Trash2 } from 'lucide-react';
 import { equipmentApi } from '../services/api';
 import Modal from '../components/Modal';
 import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import Pagination from '../components/Pagination';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 
 interface Equipment {
   id: number;
@@ -27,7 +28,7 @@ export default function Equipamentos() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Equipment | null>(null);
-  const [confirmDeactivate, setConfirmDeactivate] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const { isAdmin } = useAuth();
   const { addToast } = useToast();
 
@@ -43,7 +44,6 @@ export default function Equipamentos() {
   // Filters
   const [search, setSearch] = useState('');
   const [origemFilter, setOrigemFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -54,6 +54,8 @@ export default function Equipamentos() {
   useEffect(() => {
     load();
   }, [page, limit]);
+
+  useAutoRefresh(load, 10000);
 
   async function load() {
     try {
@@ -94,6 +96,14 @@ export default function Equipamentos() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (quantidadeTotal <= 0) {
+      addToast('error', 'Quantidade deve ser maior que zero.');
+      return;
+    }
+    if (origem === 'alugado' && !fornecedor.trim()) {
+      addToast('error', 'Equipamento alugado deve ter o nome do fornecedor preenchido.');
+      return;
+    }
     try {
       if (editing) {
         await equipmentApi.update(editing.id, {
@@ -128,15 +138,17 @@ export default function Equipamentos() {
     }
   }
 
-  async function handleDeactivate() {
-    if (!confirmDeactivate) return;
+
+
+  async function handleDelete() {
+    if (!confirmDelete) return;
     try {
-      await equipmentApi.deactivate(confirmDeactivate);
-      setConfirmDeactivate(null);
-      addToast('success', 'Equipamento desativado com sucesso.');
+      await equipmentApi.remove(confirmDelete);
+      setConfirmDelete(null);
+      addToast('success', 'Equipamento excluído com sucesso.');
       load();
     } catch (err: any) {
-      addToast('error', err.response?.data?.message || 'Erro ao desativar o equipamento.');
+      addToast('error', err.response?.data?.message || 'Erro ao excluir o equipamento.');
     }
   }
 
@@ -146,8 +158,6 @@ export default function Equipamentos() {
       if (!eq.nome.toLowerCase().includes(s) && !eq.descricao.toLowerCase().includes(s)) return false;
     }
     if (origemFilter && eq.origem !== origemFilter) return false;
-    if (statusFilter === 'ativo' && !eq.ativo) return false;
-    if (statusFilter === 'inativo' && eq.ativo) return false;
     return true;
   });
 
@@ -169,7 +179,7 @@ export default function Equipamentos() {
               Equipamentos
             </h1>
             <p className="text-sm text-slate-500">
-              {total} equipamento(s) ativos
+              {total} equipamento(s)
             </p>
           </div>
         </div>
@@ -203,15 +213,7 @@ export default function Equipamentos() {
           <option value="interno">Interno</option>
           <option value="alugado">Alugado</option>
         </select>
-        <select
-          className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">Todos os Status</option>
-          <option value="ativo">Ativo</option>
-          <option value="inativo">Inativo</option>
-        </select>
+
       </div>
 
       {/* Table */}
@@ -313,11 +315,11 @@ export default function Equipamentos() {
                           <Edit3 size={16} />
                         </button>
                         <button
-                          onClick={() => setConfirmDeactivate(eq.id)}
+                          onClick={() => setConfirmDelete(eq.id)}
                           className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                          title="Desativar"
+                          title="Excluir"
                         >
-                          <XCircle size={16} />
+                          <Trash2 size={16} />
                         </button>
                       </div>
                     </td>
@@ -343,14 +345,14 @@ export default function Equipamentos() {
         onLimitChange={(newLimit) => { setLimit(newLimit); setPage(1); }}
       />
 
-      {/* Deactivate Confirm Modal */}
+
       <ConfirmModal
-        open={confirmDeactivate !== null}
-        onClose={() => setConfirmDeactivate(null)}
-        onConfirm={handleDeactivate}
-        title="Desativar Equipamento"
-        message="Tem certeza que deseja desativar este equipamento? Ele não aparecerá mais na lista."
-        confirmLabel="Desativar"
+        open={confirmDelete !== null}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={handleDelete}
+        title="Excluir Equipamento"
+        message="Tem certeza que deseja excluir este equipamento? Esta ação é irreversível. O equipamento só pode ser excluído se não estiver em nenhum checklist ativo."
+        confirmLabel="Excluir"
         type="danger"
       />
 

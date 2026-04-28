@@ -7,7 +7,9 @@ import { ChecklistItem } from '../checklist-item/checklist-item.entity';
 import { Equipment } from '../equipment/equipment.entity';
 import { Event } from '../event/event.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EventService } from '../event/event.service';
 import { StockService } from '../stock/stock.service';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class ChecklistService {
@@ -26,7 +28,9 @@ export class ChecklistService {
 
     private readonly dataSource: DataSource,
     private readonly auditLogService: AuditLogService,
+    private readonly eventService: EventService,
     private readonly stockService: StockService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async create(
@@ -64,6 +68,16 @@ export class ChecklistService {
       );
     }
 
+    // Regra: 1 evento = 1 checklist
+    const existingChecklist = await this.checklistRepository.findOne({
+      where: { eventId },
+    });
+    if (existingChecklist) {
+      throw new BadRequestException(
+        'Este evento já possui um checklist. Cada evento só pode ter um checklist.',
+      );
+    }
+
     const checklist = this.checklistRepository.create({
       nome,
       status: 'rascunho',
@@ -93,11 +107,13 @@ export class ChecklistService {
       .orderBy('checklist.createdAt', 'DESC')
       .addOrderBy('items.nomeSnapshot', 'ASC');
 
-    // FUNCIONÁRIO só vê checklists liberados e além
+    // FUNCIONÁRIO só vê checklists liberados e além, de eventos ATIVOS e NÃO ARQUIVADOS
     if (userRole === 'FUNCIONARIO') {
-      query.where('checklist.status IN (:...statuses)', {
+      query.andWhere('checklist.status IN (:...statuses)', {
         statuses: ['liberado', 'em_evento', 'pendente_devolucao', 'concluido'],
       });
+      query.andWhere('event.arquivado = :arq', { arq: false });
+      query.andWhere('event.status != :status', { status: 'cancelado' });
     }
 
     query.skip((page - 1) * limit).take(limit);
@@ -453,10 +469,15 @@ export class ChecklistService {
 
       checklist.status = 'cancelado';
       checklist.motivoCancelamento = motivo;
-      checklist.canceladoPor = usuario;
-      checklist.canceladoEm = new Date();
-
       const saved = await manager.save(Checklist, checklist);
+
+      // Notificar funcionários sobre o cancelamento
+      await this.notificationService.notificarFuncionarios(
+        'EQUIPAMENTO_REMOVIDO', 
+        id,
+        checklist.nome,
+        'TODO O CHECKLIST (CANCELADO)',
+      );
 
       await this.auditLogService.log(
         userId ?? null,
@@ -569,5 +590,42 @@ export class ChecklistService {
     );
 
     return saved;
+  }
+
+  /**
+   * EXCLUIR: Remove permanentemente um checklist em rascunho.
+   * Apenas rascunhos podem ser excluídos (não têm estoque reservado).
+   */
+  async excluir(id: number, userId?: number, userEmail?: string) {
+    const checklist = await this.checklistRepository.findOne({
+      where: { id },
+      relations: ['items'],
+    });
+
+    if (!checklist) {
+      throw new BadRequestException('Checklist não encontrado.');
+    }
+
+    if (checklist.status !== 'rascunho') {
+      throw new BadRequestException(
+        'Apenas checklists em rascunho podem ser excluídos.',
+      );
+    }
+
+    const nome = checklist.nome;
+
+    await this.checklistRepository.remove(checklist);
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'DELETE',
+      'checklist',
+      id,
+      { nome },
+      `Checklist "${nome}" excluído permanentemente`,
+    );
+
+    return { message: `Checklist "${nome}" excluído com sucesso.` };
   }
 }

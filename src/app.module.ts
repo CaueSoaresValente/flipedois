@@ -16,6 +16,7 @@ import { EventModule } from './event/event.module';
 import { EquipmentOccurrenceModule } from './equipment-occurrence/equipment-occurrence.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     EquipmentOccurrenceModule,
     AuditLogModule,
     DashboardModule,
+    NotificationModule,
   ],
   providers: [
     {

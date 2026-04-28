@@ -1,52 +1,49 @@
--- ============================================================
--- SCRIPT DE RECONCILIAÇÃO DE ESTOQUE (v1.0)
--- Recalcula danificada e perdida a partir das ocorrências BAIXADO
--- e recalcula disponivel com base no invariante:
---   total = disponivel + emUso + danificada
--- ============================================================
+-- Sincronização de Estoque (REPAIR SCRIPT)
+-- Este script corrige inconsistências onde o "em uso" não bate com os checklists.
 
--- 1. Zerar contadores de dano/perda para recalcular com precisão
-UPDATE equipment SET "quantidadeDanificada" = 0, "quantidadePerdida" = 0;
+BEGIN;
 
--- 2. Recalcular danificada a partir de ocorrências BAIXADO tipo DANO
+-- 1. Resetar temporariamente o 'em uso' de todos os equipamentos ativos
+UPDATE equipment SET "quantidadeEmUso" = 0;
+
+-- 2. Recalcular 'em uso' baseado em checklists ATIVOS de eventos NÃO ARQUIVADOS e NÃO CANCELADOS
+-- Consideramos: liberado, em_evento, pendente_devolucao
+WITH checklist_stock AS (
+    SELECT 
+        ci."equipmentId",
+        SUM(
+            ci."quantidadePlanejada" - 
+            (
+                COALESCE(ci."quantidadeOk", 0) + 
+                COALESCE((
+                    SELECT SUM(o.quantidade) 
+                    FROM equipment_occurrence o 
+                    WHERE o."checklistItemId" = ci.id 
+                    AND o.status = 'BAIXADO' 
+                    AND o.tipo IN ('DANO', 'PERDA')
+                ), 0)
+            )
+        ) as real_em_uso
+    FROM checklist_item ci
+    JOIN checklist c ON ci."checklistId" = c.id
+    JOIN event e ON c."eventId" = e.id
+    WHERE e.arquivado = false 
+      AND e.status != 'cancelado'
+      AND c.status IN ('liberado', 'em_evento', 'pendente_devolucao')
+    GROUP BY ci."equipmentId"
+)
 UPDATE equipment e
-SET "quantidadeDanificada" = COALESCE((
-  SELECT SUM(o.quantidade)
-  FROM equipment_occurrence o
-  WHERE o."equipmentId" = e.id
-    AND o.status = 'BAIXADO'
-    AND o.tipo = 'DANO'
-), 0);
+SET "quantidadeEmUso" = cs.real_em_uso
+FROM checklist_stock cs
+WHERE e.id = cs."equipmentId";
 
--- 3. Recalcular perdida a partir de ocorrências BAIXADO tipo PERDA
-UPDATE equipment e
-SET "quantidadePerdida" = COALESCE((
-  SELECT SUM(o.quantidade)
-  FROM equipment_occurrence o
-  WHERE o."equipmentId" = e.id
-    AND o.status = 'BAIXADO'
-    AND o.tipo = 'PERDA'
-), 0);
-
--- 4. Recalcular disponivel usando a fórmula invariante:
---    disponivel = total - emUso - danificada
---    (perdida já foi subtraída do total em cada confirmarBaixa)
-UPDATE equipment
+-- 3. Recalcular o 'disponivel' baseado na invariante: total = disponivel + emUso + danificada
+-- (Perdida já foi removida do total em operações anteriores)
+UPDATE equipment 
 SET "quantidadeDisponivel" = "quantidadeTotal" - "quantidadeEmUso" - "quantidadeDanificada";
 
--- 5. Safety check: garantir que nenhum campo ficou negativo por erro histórico
-UPDATE equipment SET "quantidadeDisponivel" = 0 WHERE "quantidadeDisponivel" < 0;
+-- 4. Garantir que nada ficou negativo (safety check)
 UPDATE equipment SET "quantidadeEmUso" = 0 WHERE "quantidadeEmUso" < 0;
-UPDATE equipment SET "quantidadeDanificada" = 0 WHERE "quantidadeDanificada" < 0;
-UPDATE equipment SET "quantidadePerdida" = 0 WHERE "quantidadePerdida" < 0;
+UPDATE equipment SET "quantidadeDisponivel" = "quantidadeTotal" - "quantidadeDanificada" WHERE "quantidadeDisponivel" < 0;
 
--- 6. Verificação final dos saldos
-SELECT id, nome, "quantidadeTotal", "quantidadeDisponivel", "quantidadeEmUso",
-       "quantidadeDanificada", "quantidadePerdida",
-       ("quantidadeDisponivel" + "quantidadeEmUso" + "quantidadeDanificada") AS soma_invariante,
-       CASE
-         WHEN "quantidadeTotal" = ("quantidadeDisponivel" + "quantidadeEmUso" + "quantidadeDanificada")
-         THEN '✅ OK'
-         ELSE '❌ INCONSISTENTE'
-       END AS status
-FROM equipment;
+COMMIT;

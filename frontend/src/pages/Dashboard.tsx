@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Package,
   Calendar,
@@ -16,6 +16,7 @@ import {
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 
 interface DashboardStats {
   equipamentos: {
@@ -56,6 +57,8 @@ export default function Dashboard() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useAutoRefresh(loadData, 10000);
 
   async function loadData() {
     try {

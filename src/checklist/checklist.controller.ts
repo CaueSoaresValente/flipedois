@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -107,5 +108,11 @@ export class ChecklistController {
   @Get(':id/alertas')
   obterAlertas(@Param('id', ParseIntPipe) id: number) {
     return this.service.obterAlertas(id);
+  }
+
+  @Roles('ADMIN')
+  @Delete(':id')
+  excluir(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.service.excluir(id, req.user.sub, req.user.email);
   }
 }

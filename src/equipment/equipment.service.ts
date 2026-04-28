@@ -22,9 +22,15 @@ export class EquipmentService {
       throw new BadRequestException('Quantidade não pode ser negativa');
     }
 
-    if (dto.quantidadeTotal <= 0 && origem === 'interno') {
+    if (dto.quantidadeTotal <= 0) {
       throw new BadRequestException(
-        'Quantidade inválida para equipamento interno',
+        'Quantidade inválida. Deve ser maior que zero.',
+      );
+    }
+
+    if (origem === 'alugado' && (!dto.fornecedor || dto.fornecedor.trim() === '')) {
+      throw new BadRequestException(
+        'Equipamento alugado deve ter o nome do fornecedor preenchido.',
       );
     }
 
@@ -193,5 +199,43 @@ export class EquipmentService {
     );
 
     return saved;
+  }
+
+  async excluirPermanente(id: number, userId?: number, userEmail?: string) {
+    const equipment = await this.repository.findOne({ where: { id } });
+
+    if (!equipment) {
+      throw new BadRequestException('Equipamento não encontrado.');
+    }
+
+    // Verificar se o equipamento está em algum checklist ativo
+    const checklistItemRepo = this.repository.manager.getRepository('ChecklistItem');
+    const itemsInChecklists = await checklistItemRepo
+      .createQueryBuilder('item')
+      .innerJoin('item.checklist', 'checklist')
+      .where('item.equipmentId = :id', { id })
+      .andWhere('checklist.status NOT IN (:...statuses)', { statuses: ['concluido', 'cancelado'] })
+      .getCount();
+
+    if (itemsInChecklists > 0) {
+      throw new BadRequestException(
+        `Este equipamento está sendo usado em ${itemsInChecklists} checklist(s) ativo(s). Não é possível excluir.`,
+      );
+    }
+
+    const nome = equipment.nome;
+    await this.repository.remove(equipment);
+
+    await this.auditLogService.log(
+      userId ?? null,
+      userEmail ?? null,
+      'DELETE',
+      'equipment',
+      id,
+      { nome },
+      `Equipamento "${nome}" excluído permanentemente`,
+    );
+
+    return { message: `Equipamento "${nome}" excluído permanentemente.` };
   }
 }

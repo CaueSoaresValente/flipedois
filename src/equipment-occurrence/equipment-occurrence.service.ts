@@ -152,6 +152,7 @@ export class EquipmentOccurrenceService {
     } else if (todosSeparados) {
       checklist.status = 'em_evento';
     } else {
+      // Nem tudo separado: volta para liberado
       checklist.status = 'liberado';
     }
 
@@ -324,8 +325,10 @@ export class EquipmentOccurrenceService {
 
       const saved = await manager.save(EquipmentOccurrence, occurrence);
 
-      // Auto-sync checklist if linked
-      if (checklistItemId) {
+      // Auto-sync checklist if linked — mas NÃO para ocorrências manuais.
+      // Ocorrências manuais impactam apenas o estoque (via confirmarBaixa),
+      // sem reabrir o fluxo de devolução do checklist.
+      if (checklistItemId && !manual) {
         await this.syncChecklistItemFromOccurrences(manager, checklistItemId);
       }
 
@@ -460,8 +463,8 @@ export class EquipmentOccurrenceService {
       occurrence.status = occurrence.tipo === 'OK' ? 'RESOLVIDO' : 'BAIXADO';
       const saved = await manager.save(EquipmentOccurrence, occurrence);
 
-      // Auto-sync linked checklist item
-      if (occurrence.checklistItemId) {
+      // Auto-sync linked checklist item — mas NÃO para ocorrências manuais
+      if (occurrence.checklistItemId && !occurrence.manual) {
         await this.syncChecklistItemFromOccurrences(
           manager,
           occurrence.checklistItemId,

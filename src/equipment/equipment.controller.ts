@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post, Query, Req } from '@nestjs/common';
 import { EquipmentService } from './equipment.service';
 import { CreateEquipmentDto } from './dto/create-equipment.dto';
 import { Roles } from '../auth/roles.decorator';
@@ -48,5 +48,11 @@ export class EquipmentController {
   @Patch(':id/desativar')
   desativar(@Param('id') id: string, @Req() req: any) {
     return this.service.desativar(Number(id), req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Delete(':id')
+  excluirPermanente(@Param('id') id: string, @Req() req: any) {
+    return this.service.excluirPermanente(Number(id), req.user.sub, req.user.email);
   }
 }

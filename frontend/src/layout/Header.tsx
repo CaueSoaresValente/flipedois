@@ -2,9 +2,10 @@ import { Moon, Sun, LogOut } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import NotificationBell from '../components/NotificationBell';
 
 export default function Header() {
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [dark, setDark] = useState(
     () => localStorage.getItem('theme') === 'dark'
@@ -50,6 +51,9 @@ export default function Header() {
             </p>
           </div>
         </div>
+
+        {/* Notification Bell — only for FUNCIONARIO */}
+        {!isAdmin && <NotificationBell />}
 
         {/* Theme toggle */}
         <button

@@ -21,6 +21,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import Pagination from '../components/Pagination';
 import * as XLSX from 'xlsx-js-style';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 
 interface ChecklistItem {
   id: number;
@@ -82,7 +83,8 @@ function QuantityStepper({
       <button
         type="button"
         onClick={() => onChange(Math.max(min, value - 1))}
-        className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xl hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center"
+        disabled={value <= min}
+        className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xl hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
       >
         -
       </button>
@@ -92,7 +94,8 @@ function QuantityStepper({
       <button
         type="button"
         onClick={() => onChange(max !== undefined ? Math.min(max, value + 1) : value + 1)}
-        className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xl hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center"
+        disabled={max !== undefined && value >= max}
+        className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xl hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
       >
         +
       </button>
@@ -187,6 +190,13 @@ export default function Checklists() {
   useEffect(() => {
     load();
   }, [page, limit]);
+
+  useAutoRefresh(() => {
+    load();
+    if (modalItems && selected) {
+      openChecklistById(selected.id);
+    }
+  }, 10000);
 
   async function openChecklistById(id: number) {
     try {
@@ -575,6 +585,7 @@ export default function Checklists() {
   // Edit planned quantity modal
   const [editQtyModal, setEditQtyModal] = useState<ChecklistItem | null>(null);
   const [editQtyValue, setEditQtyValue] = useState(1);
+  const [editQtyMax, setEditQtyMax] = useState(999);
 
   async function handleRemoveItem() {
     if (!confirmRemoveItem) return;
@@ -1262,9 +1273,21 @@ export default function Checklists() {
                           )}
                           {canEditPlanned && (
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 setEditQtyModal(item);
                                 setEditQtyValue(item.quantidadePlanejada);
+                                try {
+                                  const res = await equipmentApi.search(item.nomeSnapshot);
+                                  const eq = res.data?.find((e: any) => e.id === item.equipmentId);
+                                  if (eq) {
+                                    // Max = disponivel + o que já está reservado para este item
+                                    const isRascunho = selected?.status === 'rascunho';
+                                    const jaReservado = isRascunho ? 0 : item.quantidadePlanejada;
+                                    setEditQtyMax(eq.quantidadeDisponivel + jaReservado);
+                                  } else {
+                                    setEditQtyMax(999);
+                                  }
+                                } catch { setEditQtyMax(999); }
                               }}
                               className="text-xs font-medium text-indigo-600 dark:text-white hover:underline"
                             >
@@ -1501,14 +1524,15 @@ export default function Checklists() {
         {editQtyModal && (
           <div className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Ajuste a quantidade planejada. Se o checklist estiver liberado (ou além), o sistema ajustará o estoque automaticamente.
+              Ajuste a quantidade planejada. Estoque disponível: <span className="font-bold text-indigo-500">{editQtyMax}</span> unidade(s).
             </p>
             <div className="flex justify-center py-2">
-              <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} />
+              <QuantityStepper value={editQtyValue} onChange={setEditQtyValue} min={1} max={editQtyMax} />
             </div>
             <button
               onClick={handleUpdateQuantidade}
-              className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
+              disabled={editQtyValue > editQtyMax}
+              className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
             >
               Salvar quantidade
             </button>

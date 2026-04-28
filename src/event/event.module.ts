@@ -17,5 +17,6 @@ import { StockModule } from '../stock/stock.module';
   ],
   controllers: [EventController],
   providers: [EventService],
+  exports: [EventService],
 })
 export class EventModule {}

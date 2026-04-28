@@ -5,6 +5,7 @@ import Modal from '../components/Modal';
 import ConfirmModal from '../components/ConfirmModal';
 import { useToast } from '../contexts/ToastContext';
 import Pagination from '../components/Pagination';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 
 interface UserItem {
   id: number;
@@ -40,6 +41,8 @@ export default function Usuarios() {
   useEffect(() => {
     load();
   }, [page, limit]);
+
+  useAutoRefresh(load, 10000);
 
   async function load() {
     try {

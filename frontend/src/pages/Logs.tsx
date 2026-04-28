@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ScrollText } from 'lucide-react';
 import { auditLogApi } from '../services/api';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 
 interface LogEntry {
     id: number;
@@ -26,6 +27,8 @@ export default function Logs() {
     useEffect(() => {
         loadLogs();
     }, [entityFilter, actionFilter, page]);
+
+    useAutoRefresh(loadLogs, 10000);
 
     async function loadLogs() {
         try {

@@ -45,6 +45,7 @@ export const equipmentApi = {
   }) => api.post('/equipment', data),
   update: (id: number, data: any) => api.patch(`/equipment/${id}`, data),
   deactivate: (id: number) => api.patch(`/equipment/${id}/desativar`),
+  remove: (id: number) => api.delete(`/equipment/${id}`),
 };
 
 // =====================
@@ -65,6 +66,7 @@ export const checklistApi = {
   getAlertas: (id: number) => api.get(`/checklist/${id}/alertas`),
   vincularEvento: (id: number, eventId: number) =>
     api.patch(`/checklist/${id}/vincular-evento`, { eventId }),
+  excluir: (id: number) => api.delete(`/checklist/${id}`),
 };
 
 // =====================
@@ -123,8 +125,11 @@ export const eventApi = {
   cancelar: (id: number, motivo: string) =>
     api.patch(`/event/${id}/cancelar`, { motivo }),
   clonar: (id: number) => api.post(`/event/${id}/clonar`),
+  liberar: (id: number) => api.patch(`/event/${id}/liberar`),
   arquivar: (id: number) => api.patch(`/event/${id}/arquivar`),
+  desarquivar: (id: number) => api.patch(`/event/${id}/desarquivar`),
   reativar: (id: number) => api.patch(`/event/${id}/reativar`),
+  excluirPermanente: (id: number) => api.delete(`/event/${id}`),
 };
 
 // =====================
@@ -181,4 +186,15 @@ export const auditLogApi = {
 // =====================
 export const dashboardApi = {
   getStats: () => api.get('/dashboard/stats'),
+};
+
+// =====================
+// Notification API
+// =====================
+export const notificationApi = {
+  getAll: (params?: { page?: number; limit?: number }) =>
+    api.get('/notification', { params }),
+  getUnreadCount: () => api.get('/notification/unread-count'),
+  markAsRead: (id: number) => api.patch(`/notification/${id}/read`),
+  markAllAsRead: () => api.patch('/notification/read-all'),
 };
