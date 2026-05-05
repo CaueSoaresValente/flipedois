@@ -208,22 +208,27 @@ export class EquipmentService {
       throw new BadRequestException('Equipamento não encontrado.');
     }
 
-    // Verificar se o equipamento está em algum checklist ativo
-    const checklistItemRepo = this.repository.manager.getRepository('ChecklistItem');
-    const itemsInChecklists = await checklistItemRepo
-      .createQueryBuilder('item')
-      .innerJoin('item.checklist', 'checklist')
-      .where('item.equipmentId = :id', { id })
-      .andWhere('checklist.status NOT IN (:...statuses)', { statuses: ['concluido', 'cancelado'] })
-      .getCount();
-
-    if (itemsInChecklists > 0) {
-      throw new BadRequestException(
-        `Este equipamento está sendo usado em ${itemsInChecklists} checklist(s) ativo(s). Não é possível excluir.`,
-      );
-    }
-
     const nome = equipment.nome;
+
+    // Limpar todas as dependências antes de excluir
+    const checklistItemRepo = this.repository.manager.getRepository('ChecklistItem');
+    const occurrenceRepo = this.repository.manager.getRepository('EquipmentOccurrence');
+
+    // 1. Remover todas as ocorrências vinculadas a este equipamento
+    await occurrenceRepo
+      .createQueryBuilder()
+      .delete()
+      .where('equipmentId = :id', { id })
+      .execute();
+
+    // 2. Remover todos os itens de checklist que referenciam este equipamento
+    await checklistItemRepo
+      .createQueryBuilder()
+      .delete()
+      .where('equipmentId = :id', { id })
+      .execute();
+
+    // 3. Excluir o equipamento
     await this.repository.remove(equipment);
 
     await this.auditLogService.log(
@@ -233,9 +238,50 @@ export class EquipmentService {
       'equipment',
       id,
       { nome },
-      `Equipamento "${nome}" excluído permanentemente`,
+      `Equipamento "${nome}" excluído permanentemente (dependências removidas)`,
     );
 
     return { message: `Equipamento "${nome}" excluído permanentemente.` };
+  }
+
+  /**
+   * Retorna os eventos que estão utilizando um equipamento (com quantidade em uso > 0).
+   * Usado para tooltip no frontend ao passar o mouse sobre "Em Uso".
+   */
+  async getEventosEmUso(equipmentId: number) {
+    const equipment = await this.repository.findOne({ where: { id: equipmentId } });
+    if (!equipment) {
+      throw new BadRequestException('Equipamento não encontrado.');
+    }
+
+    // Buscar itens de checklist que referenciam este equipamento
+    // em checklists ativos (liberado, em_evento, pendente_devolucao)
+    const checklistItemRepo = this.repository.manager.getRepository('ChecklistItem');
+    const items = await checklistItemRepo
+      .createQueryBuilder('item')
+      .innerJoin('item.checklist', 'checklist')
+      .innerJoin('checklist.event', 'event')
+      .where('item.equipmentId = :equipmentId', { equipmentId })
+      .andWhere('checklist.status IN (:...statuses)', {
+        statuses: ['liberado', 'em_evento', 'pendente_devolucao'],
+      })
+      .andWhere('event.arquivado = :arq', { arq: false })
+      .select([
+        'event.id AS "eventId"',
+        'event.nome AS "eventNome"',
+        'event.cliente AS "eventCliente"',
+        'SUM(item.quantidadePlanejada) AS "quantidade"',
+      ])
+      .groupBy('event.id')
+      .addGroupBy('event.nome')
+      .addGroupBy('event.cliente')
+      .getRawMany();
+
+    return items.map((row: any) => ({
+      eventId: row.eventId,
+      eventNome: row.eventNome,
+      eventCliente: row.eventCliente,
+      quantidade: Number(row.quantidade),
+    }));
   }
 }

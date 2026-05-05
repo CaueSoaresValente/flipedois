@@ -107,7 +107,7 @@ export class ChecklistService {
       .orderBy('checklist.createdAt', 'DESC')
       .addOrderBy('items.nomeSnapshot', 'ASC');
 
-    // FUNCIONÁRIO só vê checklists liberados e além, de eventos ATIVOS e NÃO ARQUIVADOS
+    // FUNCIONÁRIO só vê checklist liberado e além, de eventos ATIVOS e NÃO ARQUIVADOS
     if (userRole === 'FUNCIONARIO') {
       query.andWhere('checklist.status IN (:...statuses)', {
         statuses: ['liberado', 'em_evento', 'pendente_devolucao', 'concluido'],
@@ -555,7 +555,7 @@ export class ChecklistService {
 
     if (checklist.status !== 'cancelado') {
       throw new BadRequestException(
-        `Somente checklists cancelados podem ser reativados. Status atual: "${checklist.status}".`,
+        `Somente checklist cancelado pode ser reativado. Status atual: "${checklist.status}".`,
       );
     }
 
@@ -593,39 +593,75 @@ export class ChecklistService {
   }
 
   /**
-   * EXCLUIR: Remove permanentemente um checklist em rascunho.
-   * Apenas rascunhos podem ser excluídos (não têm estoque reservado).
+   * EXCLUIR: Remove permanentemente um checklist.
+   * Se não for rascunho, libera o estoque antes de excluir.
    */
   async excluir(id: number, userId?: number, userEmail?: string) {
-    const checklist = await this.checklistRepository.findOne({
-      where: { id },
-      relations: ['items'],
-    });
+    return this.dataSource.transaction(async (manager) => {
+      const checklist = await manager.findOne(Checklist, {
+        where: { id },
+        relations: ['items'],
+      });
 
-    if (!checklist) {
-      throw new BadRequestException('Checklist não encontrado.');
-    }
+      if (!checklist) {
+        throw new BadRequestException('Checklist não encontrado.');
+      }
 
-    if (checklist.status !== 'rascunho') {
-      throw new BadRequestException(
-        'Apenas checklists em rascunho podem ser excluídos.',
+      // Se não for rascunho nem cancelado nem concluído, precisamos liberar o estoque
+      // (Concluído e Cancelado já liberaram estoque em seus fluxos)
+      if (!['rascunho', 'cancelado', 'concluido'].includes(checklist.status)) {
+        if (checklist.items) {
+          for (const item of checklist.items) {
+            let aLiberar = 0;
+
+            if (checklist.status === 'liberado') {
+              aLiberar = item.quantidadePlanejada;
+            } else if (['em_evento', 'pendente_devolucao'].includes(checklist.status)) {
+              const occurrences = await manager.find(EquipmentOccurrence, {
+                where: { checklistItemId: item.id },
+              });
+              const baixadoDano = occurrences
+                .filter(o => o.status === 'BAIXADO' && o.tipo === 'DANO')
+                .reduce((sum, o) => sum + o.quantidade, 0);
+              const baixadoPerda = occurrences
+                .filter(o => o.status === 'BAIXADO' && o.tipo === 'PERDA')
+                .reduce((sum, o) => sum + o.quantidade, 0);
+              
+              const totalSaiuDeEmUso = (item.quantidadeOk || 0) + baixadoDano + baixadoPerda;
+              aLiberar = item.quantidadePlanejada - totalSaiuDeEmUso;
+
+              // Cancelar ocorrências PENDENTES
+              const pendentes = occurrences.filter(o => o.status === 'PENDENTE');
+              for (const occ of pendentes) {
+                occ.status = 'CANCELADO';
+                await manager.save(EquipmentOccurrence, occ);
+              }
+            }
+
+            if (aLiberar > 0) {
+              await this.stockService.liberarReserva(manager, item.equipmentId, aLiberar);
+            }
+          }
+        }
+      }
+
+      const nome = checklist.nome;
+
+      // Deletar itens primeiro por causa da FK (embora tenha CASCADE no banco, é mais seguro)
+      await manager.delete(ChecklistItem, { checklistId: id });
+      await manager.remove(checklist);
+
+      await this.auditLogService.log(
+        userId ?? null,
+        userEmail ?? null,
+        'DELETE',
+        'checklist',
+        id,
+        { nome, statusAnterior: checklist.status },
+        `Checklist "${nome}" excluído permanentemente (estoque liberado se necessário)`,
       );
-    }
 
-    const nome = checklist.nome;
-
-    await this.checklistRepository.remove(checklist);
-
-    await this.auditLogService.log(
-      userId ?? null,
-      userEmail ?? null,
-      'DELETE',
-      'checklist',
-      id,
-      { nome },
-      `Checklist "${nome}" excluído permanentemente`,
-    );
-
-    return { message: `Checklist "${nome}" excluído com sucesso.` };
+      return { message: `Checklist "${nome}" excluído com sucesso.` };
+    });
   }
 }

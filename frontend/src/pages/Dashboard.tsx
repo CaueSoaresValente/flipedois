@@ -58,7 +58,7 @@ export default function Dashboard() {
     loadData();
   }, []);
 
-  useAutoRefresh(loadData, 10000);
+  useAutoRefresh(loadData);
 
   async function loadData() {
     try {
@@ -95,18 +95,18 @@ export default function Dashboard() {
         color: 'text-[#1A237E] dark:text-[#00BCD4]',
       },
       {
-        label: 'Eventos Ativos',
+        label: 'Eventos em Andamento',
         value: stats.eventos.ativos,
-        sub: `${stats.eventos.total} total`,
+        sub: `${stats.eventos.total} eventos cadastrados`,
         icon: Calendar,
         bgLight: 'bg-purple-50 dark:bg-purple-900/20',
         color: 'text-purple-600 dark:text-purple-400',
       },
       {
-        label: 'Checklists',
-        value: stats.checklists.total,
-        sub: `${stats.checklists.porStatus?.liberado ?? 0} liberados`,
-        icon: ClipboardList,
+        label: 'Itens em Uso',
+        value: stats.equipamentos.unidadesEmUso,
+        sub: 'unidades fora do estoque',
+        icon: Activity,
         bgLight: 'bg-[#2E7D32]/10 dark:bg-[#2E7D32]/20',
         color: 'text-[#2E7D32] dark:text-emerald-400',
       },
@@ -241,7 +241,7 @@ export default function Dashboard() {
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
           <h2 className="font-semibold text-slate-800 dark:text-white">
-            Checklists Recentes
+            Checklist Recente
           </h2>
         </div>
         <div className="divide-y divide-slate-100 dark:divide-slate-700">

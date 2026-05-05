@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Package, Plus, Edit3, Search, Trash2 } from 'lucide-react';
 import { equipmentApi } from '../services/api';
 import Modal from '../components/Modal';
@@ -21,6 +22,126 @@ interface Equipment {
   origem: string;
   fornecedor?: string;
   setor: string;
+}
+
+interface EventoEmUso {
+  eventId: number;
+  eventNome: string;
+  eventCliente: string;
+  quantidade: number;
+}
+
+/**
+ * Tooltip component that shows which events are using a given equipment.
+ * Uses a portal to render outside the table overflow container.
+ * Data is fetched lazily on hover.
+ */
+function EquipmentUsageTooltip({ equipmentId, quantidadeEmUso }: { equipmentId: number; quantidadeEmUso: number }) {
+  const [eventos, setEventos] = useState<EventoEmUso[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [show, setShow] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+
+  async function fetchEventos() {
+    if (eventos !== null) return;
+    setLoading(true);
+    try {
+      const res = await equipmentApi.getEventosEmUso(equipmentId);
+      setEventos(res.data);
+    } catch {
+      setEventos([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const updatePosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const tooltipWidth = 280;
+    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+
+    // Clamp to viewport
+    if (left < 8) left = 8;
+    if (left + tooltipWidth > window.innerWidth - 8) left = window.innerWidth - tooltipWidth - 8;
+
+    setCoords({
+      top: rect.bottom + 8,
+      left,
+    });
+  }, []);
+
+  function handleMouseEnter() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      updatePosition();
+      setShow(true);
+      fetchEventos();
+    }, 300);
+  }
+
+  function handleMouseLeave() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setShow(false);
+    }, 200);
+  }
+
+  function handleTooltipMouseEnter() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+  }
+
+  return (
+    <>
+      <span
+        ref={triggerRef}
+        className="text-amber-600 dark:text-amber-400 font-semibold cursor-help underline decoration-dotted underline-offset-2"
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
+        {quantidadeEmUso}
+      </span>
+      {show && coords && createPortal(
+        <div
+          className="fixed z-[9999] w-[280px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-2xl p-4 text-left"
+          style={{ top: coords.top, left: coords.left }}
+          onMouseEnter={handleTooltipMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
+          {/* Arrow pointing up */}
+          <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-b-8 border-l-transparent border-r-transparent border-b-white dark:border-b-slate-800" />
+          <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2.5 flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-md bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-[10px]">📋</span>
+            Eventos usando este equipamento
+          </p>
+          {loading ? (
+            <div className="flex items-center justify-center py-4">
+              <div className="animate-spin w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full" />
+            </div>
+          ) : eventos && eventos.length > 0 ? (
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {eventos.map((ev) => (
+                <div key={ev.eventId} className="flex items-center justify-between bg-slate-50 dark:bg-slate-700/50 rounded-lg px-3 py-2 gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate">{ev.eventNome}</p>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate">{ev.eventCliente}</p>
+                  </div>
+                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 ml-2 flex-shrink-0 bg-indigo-50 dark:bg-indigo-900/20 px-1.5 py-0.5 rounded">
+                    {ev.quantidade}×
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400 dark:text-slate-500 py-2 text-center">Nenhum evento encontrado</p>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
+  );
 }
 
 export default function Equipamentos() {
@@ -55,7 +176,7 @@ export default function Equipamentos() {
     load();
   }, [page, limit]);
 
-  useAutoRefresh(load, 10000);
+  useAutoRefresh(load);
 
   async function load() {
     try {
@@ -219,7 +340,7 @@ export default function Equipamentos() {
       {/* Table */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[800px]">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-700/50">
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">
@@ -295,8 +416,12 @@ export default function Equipamentos() {
                       {eq.quantidadeDisponivel}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-center text-slate-500">
-                    {eq.quantidadeEmUso}
+                  <td className="px-4 py-3 text-center">
+                    {eq.quantidadeEmUso > 0 ? (
+                      <EquipmentUsageTooltip equipmentId={eq.id} quantidadeEmUso={eq.quantidadeEmUso} />
+                    ) : (
+                      <span className="text-slate-400">0</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={eq.quantidadeDanificada > 0 ? 'text-amber-500 font-semibold' : 'text-slate-400'}>{eq.quantidadeDanificada}</span>
@@ -351,7 +476,7 @@ export default function Equipamentos() {
         onClose={() => setConfirmDelete(null)}
         onConfirm={handleDelete}
         title="Excluir Equipamento"
-        message="Tem certeza que deseja excluir este equipamento? Esta ação é irreversível. O equipamento só pode ser excluído se não estiver em nenhum checklist ativo."
+        message="Tem certeza que deseja excluir este equipamento? Esta ação é irreversível. O equipamento será removido do checklist e o estoque será liberado automaticamente."
         confirmLabel="Excluir"
         type="danger"
       />

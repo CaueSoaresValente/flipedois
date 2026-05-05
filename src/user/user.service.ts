@@ -55,6 +55,9 @@ export class UserService {
     };
   }
 
+  // Email do super admin (dono do sistema) — não pode ser desativado por outros
+  private readonly SUPER_ADMIN_EMAIL = 'admin@email.com';
+
   async desativar(id: number, requestingUserId: number) {
     if (id === requestingUserId) {
       throw new BadRequestException('Você não pode desativar sua própria conta.');
@@ -63,6 +66,10 @@ export class UserService {
     const user = await this.repo.findOne({ where: { id } });
     if (!user) throw new BadRequestException('Usuário não encontrado.');
     if (!user.ativo) throw new BadRequestException('Usuário já está desativado.');
+
+    if (user.email === this.SUPER_ADMIN_EMAIL) {
+      throw new BadRequestException('Este usuário é o administrador principal do sistema e não pode ser desativado.');
+    }
 
     user.ativo = false;
     return this.repo.save(user);

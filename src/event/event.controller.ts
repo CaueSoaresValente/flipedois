@@ -144,4 +144,16 @@ export class EventController {
   excluirPermanente(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.service.excluirPermanente(id, req.user.sub, req.user.email);
   }
+
+  @Roles('ADMIN')
+  @Post('arquivar-lote')
+  arquivarLote(@Body('ids') ids: number[], @Req() req: any) {
+    return this.service.arquivarLote(ids, req.user.sub, req.user.email);
+  }
+
+  @Roles('ADMIN')
+  @Post('excluir-lote')
+  excluirLote(@Body('ids') ids: number[], @Req() req: any) {
+    return this.service.excluirLote(ids, req.user.sub, req.user.email);
+  }
 }

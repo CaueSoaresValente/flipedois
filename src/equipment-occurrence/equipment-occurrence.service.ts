@@ -58,6 +58,8 @@ export class EquipmentOccurrenceService {
 
     // Find all active occurrences linked to this checklist item
     // Active = NOT CANCELADO
+    // Both checklist-generated AND manual occurrences are included
+    // so that OK/Qb/Pd fields reflect ALL occurrences
     const occurrences = await manager.find(EquipmentOccurrence, {
       where: { checklistItemId },
     });
@@ -88,8 +90,11 @@ export class EquipmentOccurrenceService {
     item.quantidadeQuebrada = totalDano;
     item.quantidadePerdida = totalPerdaBaixada + totalPerdaPendente;
 
-    // Determine status
-    if (item.quantidadeDevolvida === 0) {
+    // Determine status — PERDIDO e QUEBRADO têm prioridade sobre 'pendente'
+    // O item só é 'pendente' se NUNCA foi devolvido e NÃO tem ocorrências
+    const foiProcessado = item.quantidadeDevolvidaOriginal > 0 || totalPerdaBaixada > 0 || totalPerdaPendente > 0 || totalDano > 0;
+
+    if (!foiProcessado) {
       item.statusDevolucao = 'pendente';
     } else if (item.quantidadePerdida > 0) {
       item.statusDevolucao = 'perdido';
@@ -101,7 +106,7 @@ export class EquipmentOccurrenceService {
 
     // Check if any occurrences are still PENDENTE (awaiting confirmation)
     const hasPending = activeOccurrences.some((o) => o.status === 'PENDENTE');
-    if (hasPending && item.quantidadeDevolvida > 0) {
+    if (hasPending && foiProcessado) {
       item.statusDevolucao = 'aguardando_confirmacao';
     }
 
@@ -125,6 +130,9 @@ export class EquipmentOccurrenceService {
 
     if (!checklist || !checklist.items.length) return;
 
+    // GUARD: nunca reverter status terminal — uma vez concluído, sempre concluído
+    if (['cancelado'].includes(checklist.status)) return;
+
     const items = checklist.items;
 
     const todosSeparados = items.every(
@@ -146,7 +154,12 @@ export class EquipmentOccurrenceService {
     );
 
     if (todosFinalizados) {
+      // Atualiza para concluído (pode re-confirmar se já estava)
       checklist.status = 'concluido';
+    } else if (checklist.status === 'concluido') {
+      // GUARD PRINCIPAL: checklist já concluído NÃO pode voltar para etapas anteriores
+      // Uma ocorrência manual confirmada não reabre o fluxo de devolução
+      return;
     } else if (algumAguardando || algumDevolvido) {
       checklist.status = 'pendente_devolucao';
     } else if (todosSeparados) {
@@ -275,6 +288,19 @@ export class EquipmentOccurrenceService {
       // 🔴 REGRA DE VALIDAÇÃO MANUAL
       if (manual) {
         if (eventId) {
+          // Verifica se o checklist do evento está concluído
+          const checklistDoEvento = await this.checklistRepo.findOne({
+            where: { eventId },
+          });
+          if (!checklistDoEvento) {
+            throw new BadRequestException('Evento não possui checklist vinculado.');
+          }
+          if (checklistDoEvento.status !== 'concluido') {
+            throw new BadRequestException(
+              `Só é possível criar ocorrências manuais em eventos cujo checklist esteja concluído. Status atual: "${checklistDoEvento.status}".`,
+            );
+          }
+
           // Se tem evento, a ocorrência manual deve ser vinculada ao checklist item
           const validacao = await this.validarEventoEquipamento(eventId, equipmentId);
           if (!validacao.valido || validacao.quantidadeOk === undefined) {
@@ -325,10 +351,10 @@ export class EquipmentOccurrenceService {
 
       const saved = await manager.save(EquipmentOccurrence, occurrence);
 
-      // Auto-sync checklist if linked — mas NÃO para ocorrências manuais.
-      // Ocorrências manuais impactam apenas o estoque (via confirmarBaixa),
-      // sem reabrir o fluxo de devolução do checklist.
-      if (checklistItemId && !manual) {
+      // Auto-sync checklist se vinculado — incluindo ocorrências manuais
+      // Ocorrências manuais vinculadas a um checklistItem atualizam os campos
+      // Plan/Sep/Devol/OK/Qb/Pd mas NÃO reabrem o fluxo de devolução
+      if (checklistItemId) {
         await this.syncChecklistItemFromOccurrences(manager, checklistItemId);
       }
 
@@ -463,8 +489,9 @@ export class EquipmentOccurrenceService {
       occurrence.status = occurrence.tipo === 'OK' ? 'RESOLVIDO' : 'BAIXADO';
       const saved = await manager.save(EquipmentOccurrence, occurrence);
 
-      // Auto-sync linked checklist item — mas NÃO para ocorrências manuais
-      if (occurrence.checklistItemId && !occurrence.manual) {
+      // Auto-sync linked checklist item — incluindo ocorrências manuais
+      // (atualiza OK/Qb/Pd mas não reabre o fluxo de devolução pois 'concluído' é guardado)
+      if (occurrence.checklistItemId) {
         await this.syncChecklistItemFromOccurrences(
           manager,
           occurrence.checklistItemId,
@@ -476,7 +503,7 @@ export class EquipmentOccurrenceService {
   }
 
   // ============================================================
-  // CANCELAR — Reverts stock (Manual only)
+  // CANCELAR — Reverts stock and syncs checklist
   // ============================================================
   async cancelar(id: number) {
     return this.dataSource.transaction(async (manager) => {
@@ -488,9 +515,10 @@ export class EquipmentOccurrenceService {
       if (!occurrence)
         throw new BadRequestException('Ocorrência não encontrada.');
 
-      if (occurrence.checklistItemId) {
+      // Checklist-generated occurrences cannot be cancelled (only manual ones can)
+      if (occurrence.checklistItemId && !occurrence.manual) {
         throw new BadRequestException(
-          'Não é possível cancelar uma ocorrência vinculada a um checklist.',
+          'Não é possível cancelar uma ocorrência gerada pelo checklist.',
         );
       }
 
@@ -503,13 +531,16 @@ export class EquipmentOccurrenceService {
       await this.reverterImpactoEstoque(manager, occurrence);
       occurrence.status = 'CANCELADO';
 
-      return manager.save(EquipmentOccurrence, occurrence);
+      const saved = await manager.save(EquipmentOccurrence, occurrence);
+
+      // Sync checklist item fields after cancellation
+      if (occurrence.checklistItemId) {
+        await this.syncChecklistItemFromOccurrences(manager, occurrence.checklistItemId);
+      }
+
+      return saved;
     });
   }
-
-  // ============================================================
-  // CANCELAR — Reverts stock and syncs checklist
-  // ============================================================
 
 
   // ============================================================
@@ -656,6 +687,8 @@ export class EquipmentOccurrenceService {
 
       const saved = await manager.save(EquipmentOccurrence, occurrence);
 
+      // Sync checklist item fields (Plan/Sep/Devol/OK/Qb/Pd) for ANY linked occurrence
+      // — both manual and checklist-generated — matching registrar() and confirmarBaixa()
       if (occurrence.checklistItemId) {
         await this.syncChecklistItemFromOccurrences(manager, occurrence.checklistItemId);
       }

@@ -1,0 +1,19 @@
+
+ver se não temos nenhum problema por conta de ter trocado concluido por concluído
+
+Os eventos em check na lixeira estou selecionando e eles estão ficando pouco tempo selecionados, uma vez que eu escolho um ou todos, tem que ficar selecionado e não depois de um tempo deselecionar
+
+O sistema não está excluindo direito os eventos que estão na lixeira.
+
+Todo evento criado deve estar como primeiro card, caso eu crie outro esse novo que eu criei fica na frente do ultimo evento criado, isso vale para tudo no sistema(independente do nome ou qualquer outra coisa)
+tudo que é criado fica em primeiro
+
+Quando alguem é desativado do sistema, ele não pode ficar conectado no sistema, assim que alguem desativa-lo, a pessoa tem que ir para a tela de login
+
+Sem contar que eu preciso de uma lixeira para poder excluir os usuário permanentemente do sistema
+
+O nosso sistema precisa de um sistema de recuperação de senha
+
+Duvida para tirar com o linconl:
+Incluimos o backup no valor?
+E como fazemos para fazer alguma alteração no sistema, quando ele estiver em produção?

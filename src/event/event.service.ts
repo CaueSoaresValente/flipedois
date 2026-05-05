@@ -12,6 +12,7 @@ import { UpdateEventTeamDto } from './dto/update-event-team.dto';
 import { EventTeam } from './event-team.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { StockService } from '../stock/stock.service';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class EventService {
@@ -31,6 +32,7 @@ export class EventService {
     private readonly auditLogService: AuditLogService,
     private readonly dataSource: DataSource,
     private readonly stockService: StockService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async create(dto: CreateEventDto, userId?: number, userEmail?: string) {
@@ -194,7 +196,7 @@ export class EventService {
         .map((cl) => `"${cl.nome}" (${cl.status})`)
         .join(', ');
       throw new BadRequestException(
-        `Não é possível finalizar. Checklists ainda pendentes: ${nomes}`,
+        `Não é possível finalizar. Checklist ainda pendente: ${nomes}`,
       );
     }
 
@@ -214,12 +216,18 @@ export class EventService {
       `Evento "${event.nome}" finalizado`,
     );
 
+    // Notificar funcionários
+    await this.notificationService.notificarEvento(
+      'EVENTO_FINALIZADO',
+      `Evento "${event.nome}" foi finalizado. O checklist foi concluído.`,
+    );
+
     return saved;
   }
 
   /**
    * CANCELAR EVENTO: Reverte todas as reservas de estoque ativas.
-   * Checklists vinculados tambem sao cancelados e seus itens voltam ao estoque.
+   * Checklist vinculado tambem e cancelado e seus itens voltam ao estoque.
    *
    * INFALIVEL — usa ajuste direto com Math.min para nunca falhar por inconsistencia.
    */
@@ -248,9 +256,20 @@ export class EventService {
           'Nao e possivel cancelar evento finalizado.',
         );
 
-      // Reverte reservas de estoque para checklists ativos
+      // Reverte reservas de estoque e cancela o checklist
       for (const checklist of event.checklists ?? []) {
-        if (['cancelado', 'concluido', 'rascunho'].includes(checklist.status)) continue;
+        if (['cancelado', 'concluido'].includes(checklist.status)) continue;
+
+        // Checklist em rascunho não tem reserva de estoque, apenas cancelar
+        if (checklist.status === 'rascunho') {
+          await manager.update(Checklist, checklist.id, {
+            status: 'cancelado',
+            motivoCancelamento: `Evento cancelado: ${motivo}`,
+            canceladoPor: userEmail ?? 'admin',
+            canceladoEm: new Date(),
+          });
+          continue;
+        }
 
         const items = await manager.find(ChecklistItem, {
           where: { checklistId: checklist.id },
@@ -330,13 +349,19 @@ export class EventService {
         `Evento "${event.nome}" cancelado: ${motivo}`,
       );
 
+      // Notificar funcionários
+      await this.notificationService.notificarEvento(
+        'EVENTO_CANCELADO',
+        `Evento "${event.nome}" foi cancelado. Motivo: ${motivo}`,
+      );
+
       return saved;
     });
   }
 
   /**
    * REATIVAR EVENTO: Desfaz o cancelamento.
-   * Evento volta para 'ativo' e checklists voltam para 'rascunho'.
+   * Evento volta para 'ativo' e checklist volta para 'rascunho'.
    */
   async reativar(id: number, userId?: number, userEmail?: string) {
     return this.dataSource.transaction(async (manager) => {
@@ -351,7 +376,7 @@ export class EventService {
         throw new BadRequestException('Apenas eventos cancelados podem ser reativados.');
       }
 
-      // Reativar checklists: todos voltam para rascunho
+      // Reativar checklist: volta para rascunho
       if (event.checklists) {
         for (const checklist of event.checklists) {
           await manager.update(Checklist, checklist.id, {
@@ -380,7 +405,7 @@ export class EventService {
         'event',
         id,
         { status: 'ativo', checklists: 'rascunho' },
-        `Evento "${event.nome}" reativado. Checklists voltaram para rascunho.`,
+        `Evento "${event.nome}" reativado. Checklist voltou para rascunho.`,
       );
 
       return saved;
@@ -388,11 +413,11 @@ export class EventService {
   }
 
   /**
-   * LIBERAR EVENTO: Libera todos os checklists elegiveis e garante reserva de estoque.
+   * LIBERAR EVENTO: Libera o checklist elegivel e garante reserva de estoque.
    *
    * Dois cenarios:
-   * 1) Checklists em 'rascunho' com itens -> reserva tudo, promove para 'liberado'
-   * 2) Checklists ja em 'liberado' -> verifica se TODOS os itens tem estoque reservado
+   * 1) Checklist em 'rascunho' com itens -> reserva tudo, promove para 'liberado'
+   * 2) Checklist ja em 'liberado' -> verifica se TODOS os itens tem estoque reservado
    *    (corrige situacoes onde itens foram adicionados antes da liberacao e ficaram sem reserva)
    */
   async liberarEvento(id: number, userId?: number, userEmail?: string) {
@@ -421,12 +446,40 @@ export class EventService {
 
         if (checklist.status === 'rascunho') {
           // === CENARIO 1: Checklist em rascunho -> reservar tudo ===
+          // Primeiro: agrupa quantidades por equipamento
           const mapa = new Map<number, number>();
           for (const item of items) {
             const atual = mapa.get(item.equipmentId) ?? 0;
             mapa.set(item.equipmentId, atual + item.quantidadePlanejada);
           }
 
+          // Segundo: PRÉ-VALIDAR estoque de TODOS os equipamentos antes de reservar
+          const bloqueios: { nome: string; disponivel: number; solicitado: number }[] = [];
+          for (const [equipmentId, quantidade] of mapa.entries()) {
+            const equipment = await manager.findOne(Equipment, {
+              where: { id: equipmentId },
+              lock: { mode: 'pessimistic_write' },
+            });
+            if (!equipment) continue;
+            if (quantidade > equipment.quantidadeDisponivel) {
+              bloqueios.push({
+                nome: equipment.nome,
+                disponivel: equipment.quantidadeDisponivel,
+                solicitado: quantidade,
+              });
+            }
+          }
+
+          if (bloqueios.length > 0) {
+            const detalhes = bloqueios
+              .map(b => `• ${b.nome}: disponível ${b.disponivel}, solicitado ${b.solicitado} (faltam ${b.solicitado - b.disponivel})`)
+              .join('\n');
+            throw new BadRequestException(
+              `Não é possível liberar o evento. Equipamentos com estoque insuficiente:\n${detalhes}`,
+            );
+          }
+
+          // Terceiro: reservar estoque (já validado, não deve falhar)
           for (const [equipmentId, quantidade] of mapa.entries()) {
             await this.stockService.reservarEstoque(
               manager,
@@ -454,19 +507,24 @@ export class EventService {
         'event',
         id,
         { checklistsLiberados: totalLiberados, itensCorrigidos: totalItensCorrigidos },
-        `Evento "${event.nome}" liberado (${totalLiberados} checklists)`,
+        `Evento "${event.nome}" liberado (${totalLiberados} checklist)`,
+      );
+
+      // Notificar funcionários
+      await this.notificationService.notificarEvento(
+        'EVENTO_LIBERADO',
+        `Evento "${event.nome}" foi liberado! Checklist pronto para separação.`,
       );
 
       return {
-        message: `${totalLiberados} checklist(s) liberado(s) com sucesso.`,
+        message: `Checklist liberado com sucesso.`,
       };
     });
   }
-
   /**
    * ARQUIVAR EVENTO: Move para lixeira.
-   * - Libera TODO o estoque reservado de todos os checklists
-   * - Reseta todos os checklists (exceto cancelados) para 'rascunho'
+   * - Libera TODO o estoque reservado do checklist
+   * - Reseta o checklist (exceto cancelado) para 'rascunho'
    * - Reseta campos de separacao/devolucao dos itens
    *
    * NOTA: Este metodo e INFALIVEL — nunca deve falhar por inconsistencia de estoque.
@@ -482,9 +540,16 @@ export class EventService {
       if (!event) throw new BadRequestException('Evento nao encontrado.');
       if (event.arquivado) throw new BadRequestException('Evento ja esta arquivado.');
 
-      // === LIBERAR ESTOQUE de todos os checklists que tem reserva ===
+      // Apenas eventos finalizados, cancelados ou previamente finalizados (restaurados) podem ser arquivados
+      if (!['finalizado', 'cancelado'].includes(event.status) && !event.foiFinalizadoPreviamente) {
+        throw new BadRequestException(
+          'Apenas eventos finalizados ou cancelados podem ser arquivados.',
+        );
+      }
+
+      // === LIBERAR ESTOQUE do checklist que tem reserva ===
       for (const checklist of event.checklists ?? []) {
-        // Rascunho: nunca reservou estoque. Cancelado/Concluido: estoque ja devolvido.
+        // Rascunho: nunca reservou estoque. Cancelado/Concluído: estoque ja devolvido.
         if (['rascunho', 'cancelado', 'concluido'].includes(checklist.status)) continue;
 
         const items = await manager.find(ChecklistItem, {
@@ -549,7 +614,7 @@ export class EventService {
         }
       }
 
-      // === RESETAR CHECKLISTS para rascunho (exceto cancelados) ===
+      // === RESETAR CHECKLIST para rascunho (exceto cancelado) ===
       for (const checklist of event.checklists ?? []) {
         if (checklist.status === 'cancelado') continue; // manter cancelados como estao
         await manager.update(Checklist, checklist.id, {
@@ -565,6 +630,11 @@ export class EventService {
       event.arquivadoPor = userEmail ?? undefined;
       event.arquivadoEm = new Date();
 
+      // Marcar se o evento foi finalizado antes de ser arquivado
+      if (event.status === 'finalizado' || event.status === 'cancelado') {
+        event.foiFinalizadoPreviamente = true;
+      }
+
       const saved = await manager.save(Event, event);
 
       await this.auditLogService.log(
@@ -574,7 +644,7 @@ export class EventService {
         'event',
         id,
         { arquivado: true },
-        `Evento "${event.nome}" arquivado. Estoque liberado e checklists resetados.`,
+        `Evento "${event.nome}" arquivado. Estoque liberado e checklist resetado.`,
       );
 
       return saved;
@@ -582,8 +652,8 @@ export class EventService {
   }
   /**
    * DESARQUIVAR EVENTO: Restaura da lixeira para a listagem ativa.
-   * Checklists já foram resetados para 'rascunho' no arquivamento.
-   * O admin precisará re-liberar os checklists para reservar estoque novamente.
+   * Checklist já foi resetado para 'rascunho' no arquivamento.
+   * O admin precisará re-liberar o checklist para reservar estoque novamente.
    */
   async desarquivar(id: number, userId?: number, userEmail?: string) {
     return this.dataSource.transaction(async (manager) => {
@@ -608,7 +678,10 @@ export class EventService {
       event.finalizadoPor = undefined;
       event.finalizadoEm = undefined;
 
-      // === GARANTIR que todos os checklists estejam em rascunho ===
+      // NOTA: foiFinalizadoPreviamente NÃO é limpo aqui
+      // Isso permite que o frontend restrinja as ações disponíveis
+
+      // === GARANTIR que o checklist esteja em rascunho ===
       // (Redundância de segurança: arquivar já reseta, mas para eventos
       //  arquivados antes dessa lógica, forçamos o reset aqui também)
       if (event.checklists) {
@@ -632,7 +705,7 @@ export class EventService {
         'event',
         id,
         { arquivado: false, status: 'ativo' },
-        `Evento "${event.nome}" restaurado da lixeira. Checklists em rascunho.`,
+        `Evento "${event.nome}" restaurado da lixeira. Checklist em rascunho.`,
       );
 
       return saved;
@@ -655,7 +728,7 @@ export class EventService {
 
       const nomeEvento = event.nome;
 
-      // === LIBERAR ESTOQUE antes de deletar (para checklists que ainda tem reserva) ===
+      // === LIBERAR ESTOQUE antes de deletar (para checklist que ainda tem reserva) ===
       for (const checklist of event.checklists ?? []) {
         if (['rascunho', 'cancelado', 'concluido'].includes(checklist.status)) continue;
 
@@ -712,7 +785,7 @@ export class EventService {
       for (const checklist of event.checklists ?? []) {
         await manager.delete(ChecklistItem, { checklistId: checklist.id });
       }
-      // 2. Deletar checklists
+      // 2. Deletar checklist
       for (const checklist of event.checklists ?? []) {
         await manager.delete(Checklist, { id: checklist.id });
       }
@@ -732,10 +805,10 @@ export class EventService {
         'event',
         id,
         { nome: nomeEvento },
-        `Evento "${nomeEvento}" excluido permanentemente`,
+        `Evento "${nomeEvento}" excluído permanentemente`,
       );
 
-      return { message: `Evento "${nomeEvento}" excluido permanentemente.` };
+      return { message: `Evento "${nomeEvento}" excluído permanentemente.` };
     });
   }
 
@@ -834,7 +907,7 @@ export class EventService {
     for (const cl of original.checklists ?? []) {
       const novoCl = await this.checklistRepo.save(
         this.checklistRepo.create({
-          nome: cl.nome,
+          nome: `${cl.nome} (cópia)`,
           status: 'rascunho',
           eventId: eventoSalvo.id,
         }),
@@ -872,5 +945,31 @@ export class EventService {
     );
 
     return { evento: eventoSalvo };
+  }
+
+  async arquivarLote(ids: number[], userId?: number, userEmail?: string) {
+    const results: { id: number; status: string; message?: string }[] = [];
+    for (const id of ids) {
+      try {
+        await this.arquivar(id, userId, userEmail);
+        results.push({ id, status: 'success' });
+      } catch (err) {
+        results.push({ id, status: 'error', message: err.message });
+      }
+    }
+    return results;
+  }
+
+  async excluirLote(ids: number[], userId?: number, userEmail?: string) {
+    const results: { id: number; status: string; message?: string }[] = [];
+    for (const id of ids) {
+      try {
+        await this.excluirPermanente(id, userId, userEmail);
+        results.push({ id, status: 'success' });
+      } catch (err) {
+        results.push({ id, status: 'error', message: err.message });
+      }
+    }
+    return results;
   }
 }

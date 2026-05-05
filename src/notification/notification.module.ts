@@ -4,12 +4,13 @@ import { Notification } from './notification.entity';
 import { User } from '../user/user.entity';
 import { NotificationService } from './notification.service';
 import { NotificationController } from './notification.controller';
+import { NotificationGateway } from './notification.gateway';
 
 @Global()
 @Module({
   imports: [TypeOrmModule.forFeature([Notification, User])],
   controllers: [NotificationController],
-  providers: [NotificationService],
-  exports: [NotificationService],
+  providers: [NotificationService, NotificationGateway],
+  exports: [NotificationService, NotificationGateway],
 })
 export class NotificationModule {}

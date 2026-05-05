@@ -62,6 +62,7 @@ interface EventOption {
   nome: string;
   cliente: string;
   status: string;
+  checklists?: any[];
 }
 
 const SETORES = ['som', 'luz', 'video', 'estrutura', 'comunicacao', 'outros'];
@@ -179,7 +180,7 @@ export default function Checklists() {
       setTotal(clRes.data.total);
       setTotalPages(clRes.data.totalPages);
       setEquipments(eqRes.data.data);
-      setEvents(evRes.data.data.filter((ev: any) => ev.status !== 'finalizado'));
+      setEvents(evRes.data.data.filter((ev: any) => ev.status !== 'finalizado' && (!ev.checklists || ev.checklists.length === 0)));
     } catch (err) {
       console.error(err);
     } finally {
@@ -196,7 +197,7 @@ export default function Checklists() {
     if (modalItems && selected) {
       openChecklistById(selected.id);
     }
-  }, 10000);
+  });
 
   async function openChecklistById(id: number) {
     try {
@@ -623,9 +624,13 @@ export default function Checklists() {
     !isAdmin &&
     ['liberado', 'em_evento', 'pendente_devolucao'].includes(selected?.status ?? '');
 
-  // Employees can return items (data collection only)
+  // Employees can return items ONLY when ALL items are fully separated
+  const allItemsSeparated = (selected?.items ?? []).every(
+    (i: ChecklistItem) => i.quantidadeSeparada >= i.quantidadePlanejada
+  );
   const canReturn =
     !isAdmin &&
+    allItemsSeparated &&
     ['em_evento', 'pendente_devolucao'].includes(selected?.status ?? '');
 
   // Admin can approve pending occurrences
@@ -666,10 +671,10 @@ export default function Checklists() {
           <ClipboardList className="text-indigo-500" size={24} />
           <div>
             <h1 className="text-2xl font-bold text-slate-800 dark:text-white">
-              Checklists
+              Checklist
             </h1>
             <p className="text-sm text-slate-500">
-              {total} checklist(s)
+              {total} checklist
             </p>
           </div>
         </div>

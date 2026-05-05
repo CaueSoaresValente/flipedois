@@ -17,6 +17,8 @@ import { EquipmentOccurrenceModule } from './equipment-occurrence/equipment-occu
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { NotificationModule } from './notification/notification.module';
+import { SeedModule } from './seed/seed.module';
+
 
 @Module({
   imports: [
@@ -48,6 +50,7 @@ import { NotificationModule } from './notification/notification.module';
     AuditLogModule,
     DashboardModule,
     NotificationModule,
+    SeedModule,
   ],
   providers: [
     {

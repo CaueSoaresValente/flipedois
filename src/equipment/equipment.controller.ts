@@ -55,4 +55,10 @@ export class EquipmentController {
   excluirPermanente(@Param('id') id: string, @Req() req: any) {
     return this.service.excluirPermanente(Number(id), req.user.sub, req.user.email);
   }
+
+  @Roles('ADMIN', 'FUNCIONARIO')
+  @Get(':id/eventos-em-uso')
+  getEventosEmUso(@Param('id') id: string) {
+    return this.service.getEventosEmUso(Number(id));
+  }
 }

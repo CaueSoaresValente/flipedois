@@ -28,7 +28,7 @@ export default function Logs() {
         loadLogs();
     }, [entityFilter, actionFilter, page]);
 
-    useAutoRefresh(loadLogs, 10000);
+    useAutoRefresh(loadLogs);
 
     async function loadLogs() {
         try {

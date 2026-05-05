@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { AlertTriangle, Plus, Check, RefreshCw, Search, Edit3, Filter, Clock } from 'lucide-react';
 import { occurrenceApi, equipmentApi, eventApi } from '../services/api';
 import Modal from '../components/Modal';
@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import Pagination from '../components/Pagination';
 import EquipmentSearch from '../components/EquipmentSearch';
+import EventSearch from '../components/EventSearch';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 
 interface Occurrence {
@@ -83,7 +84,14 @@ export default function Ocorrencias() {
     load();
   }, [page, limit]);
 
-  useAutoRefresh(load, 10000);
+  useAutoRefresh(load);
+
+  // Only show events whose checklist is concluded (manual occurrences require concluded checklist)
+  const eventsConcluidos = useMemo(() => {
+    return events.filter((ev: any) =>
+      ev.checklists?.some((cl: any) => cl.status === 'concluido'),
+    );
+  }, [events]);
 
   const [validation, setValidation] = useState<{ valido: boolean; quantidadeOk: number; mensagem?: string } | null>(null);
   const [isValidating, setIsValidating] = useState(false);
@@ -459,21 +467,15 @@ export default function Ocorrencias() {
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                 Evento (opcional)
               </label>
-              <select
-                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
+              <EventSearch
+                events={eventsConcluidos}
                 value={eventId}
-                onChange={(e) => {
-                   setEventId(e.target.value);
-                   setQuantidade(1);
+                onChange={(id) => {
+                  setEventId(id);
+                  setQuantidade(1);
                 }}
-              >
-                <option value="">Sem evento (do Disponível)</option>
-                {events.map((ev: any) => (
-                  <option key={ev.id} value={ev.id}>
-                    {ev.nome}
-                  </option>
-                ))}
-              </select>
+                placeholder="Buscar evento concluído..."
+              />
             </div>
           </div>
 

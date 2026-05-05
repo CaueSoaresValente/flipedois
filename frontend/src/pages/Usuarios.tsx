@@ -42,7 +42,7 @@ export default function Usuarios() {
     load();
   }, [page, limit]);
 
-  useAutoRefresh(load, 10000);
+  useAutoRefresh(load);
 
   async function load() {
     try {
@@ -225,7 +225,11 @@ export default function Usuarios() {
                 </td>
                 <td className="px-6 py-3 text-right">
                   <div className="flex items-center justify-end gap-1.5">
-                    {u.ativo ? (
+                    {u.email === 'admin@email.com' ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700">
+                        <ShieldCheck size={14} /> Protegido
+                      </span>
+                    ) : u.ativo ? (
                       <button
                         onClick={() => setConfirmAction({ user: u, action: 'desativar' })}
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors border border-red-200 dark:border-red-700"

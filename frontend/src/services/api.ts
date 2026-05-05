@@ -46,6 +46,7 @@ export const equipmentApi = {
   update: (id: number, data: any) => api.patch(`/equipment/${id}`, data),
   deactivate: (id: number) => api.patch(`/equipment/${id}/desativar`),
   remove: (id: number) => api.delete(`/equipment/${id}`),
+  getEventosEmUso: (id: number) => api.get(`/equipment/${id}/eventos-em-uso`),
 };
 
 // =====================
@@ -130,6 +131,8 @@ export const eventApi = {
   desarquivar: (id: number) => api.patch(`/event/${id}/desarquivar`),
   reativar: (id: number) => api.patch(`/event/${id}/reativar`),
   excluirPermanente: (id: number) => api.delete(`/event/${id}`),
+  arquivarLote: (ids: number[]) => api.post('/event/arquivar-lote', { ids }),
+  excluirLote: (ids: number[]) => api.post('/event/excluir-lote', { ids }),
 };
 
 // =====================

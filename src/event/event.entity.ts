@@ -77,6 +77,13 @@ export class Event {
   @Column({ type: 'timestamp', nullable: true })
   arquivadoEm?: Date;
 
+  /**
+   * Indica que este evento já foi finalizado anteriormente.
+   * Eventos com este flag, quando restaurados, só podem ser clonados.
+   */
+  @Column({ default: false })
+  foiFinalizadoPreviamente: boolean;
+
   @UpdateDateColumn()
   updatedAt: Date;
 }

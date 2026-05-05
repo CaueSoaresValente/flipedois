@@ -59,9 +59,12 @@ interface EventItem {
   status: 'ativo' | 'finalizado' | 'cancelado';
   finalizadoEm?: string;
   finalizadoPor?: string;
+  canceladoEm?: string;
+  canceladoPor?: string;
   checklists: ChecklistData[];
   equipe: EventTeam[];
   arquivado?: boolean;
+  foiFinalizadoPreviamente?: boolean;
 }
 
 interface EquipmentOption {
@@ -163,7 +166,12 @@ export default function Eventos() {
   const [searchFilter, setSearchFilter] = useState('');
 
   const [showArchived, setShowArchived] = useState(false);
+  const [trashStatusFilter, setTrashStatusFilter] = useState<'' | 'finalizado' | 'cancelado'>('');
   const [confirmArchive, setConfirmArchive] = useState<EventItem | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [isBulkLoading, setIsBulkLoading] = useState(false);
+  const [confirmBulkExcluir, setConfirmBulkExcluir] = useState(false);
+  const [confirmBulkArquivar, setConfirmBulkArquivar] = useState(false);
   const [confirmExcluir, setConfirmExcluir] = useState<EventItem | null>(null);
 
   // Create form
@@ -195,6 +203,7 @@ export default function Eventos() {
       ]);
       setEvents(evRes.data.data);
       setTotal(evRes.data.total);
+      setSelectedIds([]); // Clear selection on load
       setTotalPages(evRes.data.totalPages);
       setChecklists(clRes.data.data);
     } catch (err) {
@@ -211,7 +220,7 @@ export default function Eventos() {
   useAutoRefresh(() => {
     load();
     if (modalChecklist && checklistModal) refreshChecklistModal();
-  }, 10000);
+  });
 
   // Deep-link: auto-open event checklist when navigating to /eventos/:eventId
   useEffect(() => {
@@ -304,7 +313,7 @@ export default function Eventos() {
   async function handleLiberarEvento(ev: EventItem) {
     try {
       await eventApi.liberar(ev.id);
-      addToast('success', `Evento "${ev.nome}" liberado! Checklists disponíveis para a equipe.`);
+      addToast('success', `Evento "${ev.nome}" liberado! Checklist disponível para a equipe.`);
       await load();
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao liberar o evento.');
@@ -315,7 +324,7 @@ export default function Eventos() {
     if (!isAdmin) return;
     try {
       await eventApi.reativar(ev.id);
-      addToast('success', `Evento "${ev.nome}" reativado. Checklists voltaram para rascunho.`);
+      addToast('success', `Evento "${ev.nome}" reativado. Checklist voltou para rascunho.`);
       await load();
     } catch (err: any) {
       addToast('error', err.response?.data?.message || 'Erro ao reativar o evento.');
@@ -423,8 +432,11 @@ export default function Eventos() {
 
   // Role-based checklist permissions
   const canSeparate = !isAdmin && ['liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
-  // 🔴 Employee can return items ONLY when ALL items are separated (em_evento or pendente_devolucao)
-  const canEmployeeReturn = !isAdmin && ['em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
+  // 🔴 Employee can return items ONLY when ALL items are fully separated
+  const allItemsSeparated = (checklistModal?.items ?? []).every(
+    (i: ChecklistItemData) => i.quantidadeSeparada >= i.quantidadePlanejada
+  );
+  const canEmployeeReturn = !isAdmin && allItemsSeparated && ['em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '');
   // 🔴 Planned quantity is IMMUTABLE during return phase (unless it's increased while not complete)
   const canEditPlanned = isAdmin && ['rascunho', 'liberado', 'em_evento', 'pendente_devolucao'].includes(checklistModal?.status ?? '') && checklistModal?.status !== 'cancelado';
 
@@ -563,8 +575,8 @@ export default function Eventos() {
       const alertas = result.alertasEstoque ?? [];
 
       if (alertas.length > 0) {
-        const nomes = alertas.map((a) => `${a.nome} (disponível: ${a.disponivel}, solicitado: ${a.solicitado})`).join(', ');
-        addToast('warning', `Evento clonado com sucesso: "${novo?.nome}". Itens com estoque insuficiente: ${nomes}. Ajuste antes de liberar.`);
+        const nomes = alertas.map((a) => `${a.nome} (disponível: ${a.disponivel}, solicitado: ${a.solicitado})`);
+        setLowStockNames(nomes);
       } else {
         addToast('success', `Evento clonado com sucesso: "${novo?.nome ?? 'cópia'}"`);
       }
@@ -615,6 +627,7 @@ export default function Eventos() {
     if (!isAdmin) return false;
     if (ev.status === 'finalizado') return false;
     if (ev.status === 'cancelado') return false;
+    if (ev.foiFinalizadoPreviamente) return false;
     if (!ev.checklists?.length) return false;
     return ev.checklists.every((cl) => ['concluido', 'cancelado'].includes(cl.status));
   }
@@ -652,6 +665,52 @@ export default function Eventos() {
       addToast('error', err.response?.data?.message || 'Erro ao excluir o evento.');
     }
   }
+
+  async function handleBulkArchive() {
+    if (selectedIds.length === 0) return;
+    setIsBulkLoading(true);
+    try {
+      await eventApi.arquivarLote(selectedIds);
+      addToast('success', `${selectedIds.length} eventos arquivados com sucesso.`);
+      setSelectedIds([]);
+      setConfirmBulkArquivar(false);
+      await load();
+    } catch (err: any) {
+      addToast('error', 'Erro ao arquivar eventos em lote.');
+    } finally {
+      setIsBulkLoading(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.length === 0) return;
+    setIsBulkLoading(true);
+    try {
+      await eventApi.excluirLote(selectedIds);
+      addToast('success', `${selectedIds.length} eventos excluídos permanentemente.`);
+      setSelectedIds([]);
+      setConfirmBulkExcluir(false);
+      await load();
+    } catch (err: any) {
+      addToast('error', 'Erro ao excluir eventos em lote.');
+    } finally {
+      setIsBulkLoading(false);
+    }
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === events.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(events.map(ev => ev.id));
+    }
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
 
   if (loading) {
     return (
@@ -697,63 +756,147 @@ export default function Eventos() {
           />
         </div>
 
-        <button
-          onClick={() => setShowArchived(!showArchived)}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${showArchived
-            ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700'
-            : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600'
-          }`}
-        >
-          <Archive size={14} />
-          {showArchived ? 'Ver Ativos' : 'Lixeira'}
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => { setShowArchived(!showArchived); setTrashStatusFilter(''); setSelectedIds([]); }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${showArchived
+              ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700'
+              : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600'
+            }`}
+          >
+            <Archive size={14} />
+            {showArchived ? 'Ver Ativos' : 'Lixeira'}
+          </button>
+        )}
+
+        {/* Bulk Action Controls - Trash only */}
+        {isAdmin && showArchived && events.length > 0 && (
+          <div className="flex items-center gap-3 ml-auto">
+            <button
+              onClick={toggleSelectAll}
+              className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+            >
+              {selectedIds.length === events.length ? 'Desmarcar Todos' : 'Selecionar Todos'}
+            </button>
+            
+            {selectedIds.length > 0 && (
+              <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                  {selectedIds.length} selecionados
+                </span>
+                <button
+                  onClick={() => setConfirmBulkExcluir(true)}
+                  disabled={isBulkLoading}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-red-500 hover:bg-red-600 text-white transition-colors disabled:opacity-50"
+                >
+                  <Trash2 size={12} /> Excluir
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Status filter for trash view */}
+        {isAdmin && showArchived && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setTrashStatusFilter('')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                trashStatusFilter === ''
+                  ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700'
+                  : 'bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600'
+              }`}
+            >
+              Todos
+            </button>
+            <button
+              onClick={() => setTrashStatusFilter('finalizado')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                trashStatusFilter === 'finalizado'
+                  ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                  : 'bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600'
+              }`}
+            >
+              Finalizados
+            </button>
+            <button
+              onClick={() => setTrashStatusFilter('cancelado')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                trashStatusFilter === 'cancelado'
+                  ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700'
+                  : 'bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600'
+              }`}
+            >
+              Cancelados
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
         {events.filter((ev) => {
           if (searchFilter) {
             const s = searchFilter.toLowerCase();
             if (!ev.nome.toLowerCase().includes(s) && !ev.cliente.toLowerCase().includes(s) && !ev.local.toLowerCase().includes(s)) return false;
           }
+          // Status filter for trash view
+          if (showArchived && trashStatusFilter && ev.status !== trashStatusFilter) return false;
 
           return true;
         }).map((ev) => (
           <div
             key={ev.id}
-            className={`bg-white dark:bg-slate-800 rounded-xl border p-5 hover:shadow-lg transition-shadow ${
+            className={`bg-white dark:bg-slate-800 rounded-xl border p-5 hover:shadow-lg transition-shadow relative ${
+              selectedIds.includes(ev.id) ? 'ring-2 ring-indigo-500 border-indigo-500' : ''
+            } ${
               ev.status === 'finalizado'
                 ? 'border-emerald-300 dark:border-emerald-700 opacity-80'
                 : 'border-slate-200 dark:border-slate-700'
             }`}
           >
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-semibold text-slate-700 dark:text-white">
-                    {ev.nome}
-                  </h3>
-                  {ev.arquivado ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-medium">
-                      📦 Arquivado
-                    </span>
-                  ) : ev.status === 'finalizado' ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-medium">
-                      ✓ Finalizado
-                    </span>
-                  ) : ev.status === 'cancelado' ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-medium">
-                      ✖ Cancelado
-                    </span>
-                  ) : (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 font-medium">
-                      Em andamento
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-slate-500 dark:text-slate-400">{ev.cliente}</p>
+            {/* Selection Checkbox - Trash only */}
+            {isAdmin && showArchived && (
+              <div className="absolute top-3 right-3 z-10">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(ev.id)}
+                  onChange={() => toggleSelect(ev.id)}
+                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                />
               </div>
-              <div className="flex gap-1 flex-shrink-0 ml-2">
+            )}
+            <div className="flex flex-col gap-3 mb-4 border-b border-slate-100 dark:border-slate-700/50 pb-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <h3 className="font-bold text-slate-800 dark:text-white text-base leading-tight">
+                      {ev.nome}
+                    </h3>
+                    {ev.arquivado ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-bold uppercase tracking-wider">
+                        📦 Arquivado
+                      </span>
+                    ) : ev.status === 'finalizado' ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-bold uppercase tracking-wider">
+                        ✓ Finalizado
+                      </span>
+                    ) : ev.status === 'cancelado' ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-bold uppercase tracking-wider" title={ev.canceladoPor ? `Cancelado por ${ev.canceladoPor}${ev.canceladoEm ? ` em ${new Date(ev.canceladoEm).toLocaleDateString('pt-BR')}` : ''}` : ''}>
+                        ✖ Cancelado
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 font-bold uppercase tracking-wider">
+                        Em andamento
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium truncate">{ev.cliente}</p>
+                </div>
+              </div>
+
+              {/* Actions Row */}
+              <div className="flex gap-1.5 flex-wrap items-center">
                 {ev.arquivado ? (
                   /* === LIXEIRA: apenas Restaurar e Excluir === */
                   <>
@@ -779,59 +922,85 @@ export default function Eventos() {
                 ) : (
                   /* === EVENTO ATIVO: botões normais === */
                   <>
-                    {isAdmin && ev.status === 'ativo' && (
+                    {/* Evento que foi finalizado previamente e restaurado: apenas Clonar e Arquivar */}
+                    {isAdmin && ev.foiFinalizadoPreviamente && ev.status === 'ativo' ? (
                       <>
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300" title="Este evento já foi finalizado anteriormente. Apenas clone ou arquive.">
+                          ⚠️ Restaurado
+                        </span>
                         <button
-                          onClick={() => openEdit(ev)}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-                          title="Editar evento"
+                          onClick={() => handleClonarEvento(ev)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors"
+                          title="Clonar evento (inclui checklist e equipe)"
                         >
-                          <Edit3 size={13} /> Editar
+                          <Copy size={13} /> Clonar
                         </button>
                         <button
-                          onClick={() => { setConfirmCancelar(ev); setMotivoCancelamento(''); }}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
-                          title="Cancelar evento"
+                          onClick={() => setConfirmArchive(ev)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          title="Arquivar evento (mover para lixeira)"
                         >
-                          <Ban size={13} /> Cancelar
+                          <Trash2 size={16} />
                         </button>
                       </>
-                    )}
-                    {isAdmin && ev.status === 'cancelado' && (
-                      <button
-                        onClick={() => handleReativarEvento(ev)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
-                        title="Reativar evento (volta para rascunho)"
-                      >
-                        <RotateCcw size={13} /> Reativar Evento
-                      </button>
-                    )}
-                    {isAdmin && (
-                      <button
-                        onClick={() => handleClonarEvento(ev)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors"
-                        title="Clonar evento (inclui checklists e equipe)"
-                      >
-                        <Copy size={13} /> Clonar
-                      </button>
-                    )}
-                    {isAdmin && ev.status === 'ativo' && !ev.arquivado && ev.checklists?.some(cl => cl.status === 'rascunho') && (
-                      <button
-                        onClick={() => handleLiberarEvento(ev)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors"
-                        title="Liberar evento para a equipe (reserva estoque de todos os checklists)"
-                      >
-                        <CheckCircle2 size={13} /> Liberar Evento
-                      </button>
-                    )}
-                    {isAdmin && (
-                      <button
-                        onClick={() => setConfirmArchive(ev)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                        title="Arquivar evento (mover para lixeira)"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                    ) : (
+                      <>
+                        {isAdmin && ev.status === 'ativo' && (
+                          <>
+                            <button
+                              onClick={() => openEdit(ev)}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                              title="Editar evento"
+                            >
+                              <Edit3 size={13} /> Editar
+                            </button>
+                            <button
+                              onClick={() => { setConfirmCancelar(ev); setMotivoCancelamento(''); }}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                              title="Cancelar evento"
+                            >
+                              <Ban size={13} /> Cancelar
+                            </button>
+                          </>
+                        )}
+                        {isAdmin && ev.status === 'cancelado' && (
+                          <button
+                            onClick={() => handleReativarEvento(ev)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
+                            title="Reativar evento (volta para rascunho)"
+                          >
+                            <RotateCcw size={13} /> Reativar Evento
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleClonarEvento(ev)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors"
+                            title="Clonar evento (inclui checklist e equipe)"
+                          >
+                            <Copy size={13} /> Clonar
+                          </button>
+                        )}
+                        {isAdmin && ev.status === 'ativo' && !ev.arquivado && ev.checklists?.some(cl => cl.status === 'rascunho') && (
+                          <button
+                            onClick={() => handleLiberarEvento(ev)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors"
+                            title="Liberar evento para a equipe (reserva estoque do checklist)"
+                          >
+                            <CheckCircle2 size={13} /> Liberar Evento
+                          </button>
+                        )}
+                        {/* Arquivar: apenas eventos finalizados ou cancelados */}
+                        {isAdmin && ['finalizado', 'cancelado'].includes(ev.status) && (
+                          <button
+                            onClick={() => setConfirmArchive(ev)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                            title="Arquivar evento (mover para lixeira)"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </>
                     )}
                     <button
                       onClick={() => openTeam(ev)}
@@ -864,7 +1033,14 @@ export default function Eventos() {
                             cl.status === 'em_evento' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-300' :
                             cl.status === 'cancelado' ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300' :
                             'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200'
-                          }`}>{cl.status}</span>
+                          }`}>{
+                            cl.status === 'concluido' ? 'Concluído' :
+                            cl.status === 'rascunho' ? 'Rascunho' :
+                            cl.status === 'liberado' ? 'Liberado' :
+                            cl.status === 'em_evento' ? 'Em Evento' :
+                            cl.status === 'pendente_devolucao' ? 'Pendente Devolução' :
+                            cl.status === 'cancelado' ? 'Cancelado' : cl.status
+                          }</span>
                         </p>
                       </div>
 
@@ -893,7 +1069,7 @@ export default function Eventos() {
                 </div>
               )}
               {/* Novo Checklist button on the event card */}
-              {!ev.arquivado && isAdmin && ev.status === 'ativo' && (
+              {!ev.arquivado && isAdmin && ev.status === 'ativo' && !ev.foiFinalizadoPreviamente && (!ev.checklists || ev.checklists.length === 0) && (
                 <button
                   type="button"
                   onClick={() => { setCreateChecklistForEventId(ev.id); setNewChecklistNome(`Checklist ${ev.nome}`); setModalCreateChecklist(true); }}
@@ -905,10 +1081,27 @@ export default function Eventos() {
               {ev.equipe?.length > 0 && (
                 <p className="text-xs"><UsersIcon size={11} className="inline mr-0.5" /> {ev.equipe.length} membro(s) na equipe</p>
               )}
-              {ev.finalizadoPor && (
-                <p className="text-xs text-emerald-600 dark:text-emerald-400">
-                  <CheckCircle size={11} className="inline mr-0.5" /> Finalizado por {ev.finalizadoPor}
-                  {ev.finalizadoEm ? ` em ${new Date(ev.finalizadoEm).toLocaleDateString('pt-BR')}` : ''}
+              {ev.status === 'finalizado' && ev.finalizadoPor && (
+                <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center flex-wrap gap-1">
+                  <CheckCircle size={11} className="flex-shrink-0" /> 
+                  <span>Finalizado por {ev.finalizadoPor}</span>
+                  <span className="opacity-70 text-[10px]">
+                    {ev.finalizadoEm ? ` em ${new Date(ev.finalizadoEm).toLocaleDateString('pt-BR')}` : ''}
+                  </span>
+                </p>
+              )}
+              {ev.status === 'cancelado' && ev.canceladoPor && (
+                <p className="text-[11px] text-red-600 dark:text-red-400 flex items-center flex-wrap gap-1">
+                  <Ban size={11} className="flex-shrink-0" /> 
+                  <span>Cancelado por {ev.canceladoPor}</span>
+                  <span className="opacity-70 text-[10px]">
+                    {ev.canceladoEm ? ` em ${new Date(ev.canceladoEm).toLocaleDateString('pt-BR')}` : ''}
+                  </span>
+                </p>
+              )}
+              {ev.foiFinalizadoPreviamente && ev.status === 'ativo' && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                  ⚠️ Este evento já foi finalizado anteriormente. Apenas clone para criar um novo evento.
                 </p>
               )}
             </div>
@@ -926,10 +1119,10 @@ export default function Eventos() {
                 <CheckCircle size={14} /> Finalizar Evento
               </button>
             )}
-            {!ev.arquivado && isAdmin && ev.status !== 'finalizado' && ev.checklists?.length > 0 && !canFinalizar(ev) && (
+            {!ev.arquivado && isAdmin && ev.status === 'ativo' && !ev.foiFinalizadoPreviamente && ev.checklists?.length > 0 && !canFinalizar(ev) && (
               <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
                 <XCircle size={14} />
-                Aguardando conclusão dos checklists
+                Aguardando conclusão do checklist
               </div>
             )}
           </div>
@@ -1476,19 +1669,18 @@ export default function Eventos() {
                     const fullySeparated = item.quantidadeSeparada >= item.quantidadePlanejada;
                     const fullyReturned = item.quantidadeDevolvida >= item.quantidadeSeparada && item.quantidadeSeparada > 0;
                     const isPending = !isAdmin && ['em_evento', 'pendente_devolucao'].includes(checklistModal.status) && item.quantidadeDevolvida < item.quantidadeSeparada;
-                    const isLowStockCloned = lowStockNames.includes(item.nomeSnapshot);
+                    const isLowStockCloned = false; // Stock conflict alerts disabled
 
                     return (
                       <tr
                         key={item.id}
                         className={
                           isPending ? 'bg-red-50 dark:bg-red-900/10'
-                          : isLowStockCloned ? 'bg-red-50/60 dark:bg-red-900/20'
                           : ''
                         }
                       >
                         <td className="px-3 py-2">
-                          <p className={isLowStockCloned ? 'font-medium text-red-700 dark:text-red-300' : 'font-medium text-slate-700 dark:text-slate-200'}>
+                          <p className="font-medium text-slate-700 dark:text-slate-200">
                             {item.nomeSnapshot}
                           </p>
                           <p className="text-xs text-slate-400 dark:text-slate-500">{item.setor}</p>
@@ -1849,7 +2041,7 @@ export default function Eventos() {
         onClose={() => setConfirmExcluir(null)}
         onConfirm={handleExcluirPermanente}
         title="Excluir Evento Permanentemente"
-        message={`ATENÇÃO: Esta ação é IRREVERSÍVEL! Tem certeza que deseja excluir permanentemente o evento "${confirmExcluir?.nome}"? Todos os dados serão perdidos: checklists, itens, equipe e histórico.`}
+        message={`ATENÇÃO: Esta ação é IRREVERSÍVEL! Tem certeza que deseja excluir permanentemente o evento "${confirmExcluir?.nome}"? Todos os dados serão perdidos: checklist, itens, equipe e histórico.`}
         confirmLabel="Excluir Permanentemente"
         type="danger"
       />
@@ -1863,6 +2055,60 @@ export default function Eventos() {
         confirmLabel="Excluir"
         type="danger"
       />
+
+      {/* Bulk Archive Confirm */}
+      <ConfirmModal
+        open={confirmBulkArquivar}
+        onClose={() => setConfirmBulkArquivar(false)}
+        onConfirm={handleBulkArchive}
+        title="Arquivar Eventos em Lote"
+        message={`Tem certeza que deseja arquivar os ${selectedIds.length} evento(s) selecionado(s)? Eles serão movidos para a lixeira.`}
+        confirmLabel="Arquivar Selecionados"
+        type="danger"
+      />
+
+      {/* Bulk Delete Confirm */}
+      <ConfirmModal
+        open={confirmBulkExcluir}
+        onClose={() => setConfirmBulkExcluir(false)}
+        onConfirm={handleBulkDelete}
+        title="Excluir Eventos Permanentemente"
+        message={`ATENÇÃO: Esta ação é IRREVERSÍVEL! Tem certeza que deseja excluir permanentemente os ${selectedIds.length} evento(s) selecionado(s)?`}
+        confirmLabel="Excluir Permanentemente"
+        type="danger"
+      />
+
+      {/* Stock Conflict Alert Modal */}
+      <Modal
+        open={lowStockNames.length > 0}
+        onClose={() => setLowStockNames([])}
+        title="Alerta de Estoque"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl">
+            <AlertCircle className="text-amber-600 dark:text-amber-400 shrink-0" size={24} />
+            <p className="text-sm text-amber-800 dark:text-amber-200">
+              O evento foi clonado com sucesso, mas alguns itens estão com estoque insuficiente para o novo checklist.
+            </p>
+          </div>
+          
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Itens com conflito:</p>
+            <ul className="list-disc list-inside text-sm text-slate-600 dark:text-slate-400 space-y-1 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700 max-h-[40vh] overflow-y-auto">
+              {lowStockNames.map((name, i) => (
+                <li key={i}>{name}</li>
+              ))}
+            </ul>
+          </div>
+          
+          <button
+            onClick={() => setLowStockNames([])}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            Entendido
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
